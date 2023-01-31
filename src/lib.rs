@@ -5,7 +5,6 @@
 #![feature(const_trait_impl)]
 #![feature(const_ptr_write)]
 #![feature(strict_provenance)]
-#![allow(clippy::drop_copy)]
 
 use std::{
     cell::SyncUnsafeCell,
@@ -16,7 +15,7 @@ use std::{
     ops::Index,
     ptr::invalid_mut,
     sync::{
-        atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering, AtomicIsize},
         RwLock,
     },
 };
@@ -59,7 +58,7 @@ struct SharedItems<'a, T> {
     cursor: AtomicUsize,                                     // current index on current node
     cursor_node_ptr: AtomicPtr<LarivNode<'a, T>>,            // current node of the list
     cap: usize,                                              // capacity (max elements)
-    allocation_threshold: AtomicUsize, // set to 30% of the capacity after reaching the end
+    allocation_threshold: AtomicIsize, // set to 30% of the capacity after reaching the end
     reallocating: AtomicBool,          // spin lock for whether reallocation is happening
     nodes: AtomicUsize,                // nodes allocated. Used for calculating capacity
 }
@@ -76,7 +75,7 @@ impl<'a, T> Lariv<'a, T> {
             cursor: AtomicUsize::new(len),
             cursor_node_ptr: AtomicPtr::new(invalid_mut(align_of::<LarivNode<'a, T>>())),
             cap,
-            allocation_threshold: AtomicUsize::new(0),
+            allocation_threshold: AtomicIsize::new(0),
             reallocating: AtomicBool::new(false),
             nodes: AtomicUsize::new(1),
         }));
@@ -129,17 +128,7 @@ impl<'a, T> Lariv<'a, T> {
     pub fn remove(&self, index: LarivIndex) {
         if let Some(e) = self.traverse_get(index) {
             unsafe { &*e }.empty();
-            drop(self.shared.allocation_threshold.fetch_update(
-                Ordering::AcqRel,
-                Ordering::Acquire,
-                |i| {
-                    if i == 0 {
-                        None
-                    } else {
-                        Some(i - 1)
-                    }
-                },
-            ));
+            self.shared.allocation_threshold.fetch_sub(1, Ordering::AcqRel);
         }
     }
 
@@ -221,43 +210,44 @@ impl<'a, T> LarivNode<'a, T> {
                 if end {
                     if let Some(next) = node.next.get() {
                         // traverse to the next node
+                        // println!("Traversing to next node");
                         node.shared.cursor_node_ptr.store(unsafe {
                             *(next as *const AliasableBox<LarivNode<'a, T>>).cast::<*const LarivNode<'a, T>>()
                         }.cast_mut(), Ordering::Release);
                         node.shared.cursor.store(0, Ordering::Release);
                         continue
-                    } else if node.shared.allocation_threshold.fetch_update(
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                        |i| if i == 0 { Some(node.calculate_allocate_threshold()) } else { None }
-                    ).is_ok() {
+                    } else if node.shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
                         // traverse the buffer list and check for empty spaces before allocating
+                        // println!("Traversing to start");
+                        node.shared.allocation_threshold.store(self.calculate_allocate_threshold(), Ordering::Release);
                         node.shared.cursor_node_ptr.store(unsafe {
                             (*node.shared.head.get()).assume_init() as *const LarivNode<'a, T>
                         }.cast_mut(), Ordering::Release);
                         node.shared.cursor.store(0, Ordering::Release);
                         continue
-                    } else if node.next.get().is_none() && node.shared.allocation_threshold.load(Ordering::Acquire) != 0 && !node.shared.reallocating.fetch_or(true, Ordering::AcqRel) {
-                        //println!("reallocating");
+                    } else if node.shared.allocation_threshold.load(Ordering::Acquire) >= 0 && !node.shared.reallocating.fetch_or(true, Ordering::AcqRel) {
+                        // println!("reallocating");
                         // allocate a new buffer
                         let li = node.extend(element);
                         // clear reallocation bool
                         node.shared.reallocating.store(false, Ordering::Release);
                         // println!("{index}");
                         // LarivIndex::new(node.nth + 1, 0)
-                        if li.index as usize > node.shared.cap {
-                            println!("aaaaaa {}", li.index);
-                        } 
                         li
                     } else {
-                        // load next node
+                        // println!("waiting for reallocation; traversing");
+                        while self.shared.reallocating.load(Ordering::Acquire) {
+                            // println!("aaaaaa");
+                            spin_loop()
+                        }
                         node = unsafe { &*node.shared.cursor_node_ptr.load(Ordering::Acquire) };
+                        index = self.shared.cursor.fetch_add(1, Ordering::AcqRel);
                         continue
                     }
                 } else {
                     // wait for reallocation, just in case
                     while unlikely(node.shared.reallocating.load(Ordering::Acquire)) {
-                        //println!("spinning at {}", line!());
+                        // println!("spinning at {}", line!());
                         spin_loop();
                     }
                     // load next node
@@ -295,9 +285,9 @@ impl<'a, T> LarivNode<'a, T> {
     }
 
     #[inline]
-    fn calculate_allocate_threshold(&self) -> usize {
+    fn calculate_allocate_threshold(&self) -> isize {
         // 30% of total capacity
-        ((self.shared.nodes.load(Ordering::Acquire) * self.shared.cap) as f64 * 0.3).abs() as usize
+        ((self.shared.nodes.load(Ordering::Acquire) * self.shared.cap) as f64 * 0.3).abs() as isize
     }
 }
 
