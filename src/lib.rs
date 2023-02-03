@@ -13,7 +13,7 @@ use std::{
     intrinsics::unlikely,
     mem::{align_of, transmute, ManuallyDrop, MaybeUninit},
     ops::Index,
-    ptr::invalid_mut,
+    ptr::{invalid_mut, write_bytes},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
         RwLock,
@@ -100,13 +100,8 @@ impl<'a, T> Lariv<'a, T> {
     #[cfg_attr(not(miri), allow(unused_variables, unused_mut))]
     #[inline]
     const fn init_buf<V: ~const Default>(ptr: *mut V, cap: usize) {
-        let mut i = 0;
-        loop {
-            if i == cap {
-                break;
-            };
-            unsafe { ptr.add(i).write(V::default()) }
-            i += 1;
+        unsafe {
+            write_bytes(ptr, 0, cap);
         }
     }
 
