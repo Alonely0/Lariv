@@ -1,6 +1,6 @@
 use std::thread::scope;
 
-use crate::{LarivIndex, Lariv};
+use crate::{Lariv, LarivIndex};
 
 #[test]
 pub fn all_of_it() {

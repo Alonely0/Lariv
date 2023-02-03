@@ -11,11 +11,11 @@ use std::{
     fmt::Debug,
     hint::spin_loop,
     intrinsics::unlikely,
-    mem::{align_of, ManuallyDrop, MaybeUninit, transmute},
+    mem::{align_of, transmute, ManuallyDrop, MaybeUninit},
     ops::Index,
     ptr::invalid_mut,
     sync::{
-        atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering, AtomicIsize},
+        atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
         RwLock,
     },
 };
@@ -31,7 +31,7 @@ mod tests;
 
 /// Linked Atomic Vector
 pub struct Lariv<'a, T> {
-    // len: AtomicUsize,                   // length (occupied)
+    // len: AtomicUsize,                     // length (occupied)
     list: AliasableBox<LarivNode<'a, T>>, // linked list to buffers
     shared: &'a SharedItems<'a, T>,       // shared items across nodes
 }
@@ -101,7 +101,6 @@ impl<'a, T> Lariv<'a, T> {
     #[inline]
     const fn init_buf<V: ~const Default>(ptr: *mut V, cap: usize) {
         let mut i = 0;
-        #[cfg(miri)]
         loop {
             if i == cap {
                 break;
@@ -128,7 +127,9 @@ impl<'a, T> Lariv<'a, T> {
     pub fn remove(&self, index: LarivIndex) {
         if let Some(e) = self.traverse_get(index) {
             unsafe { &*e }.empty();
-            self.shared.allocation_threshold.fetch_sub(1, Ordering::AcqRel);
+            self.shared
+                .allocation_threshold
+                .fetch_sub(1, Ordering::AcqRel);
         }
     }
 
@@ -137,10 +138,10 @@ impl<'a, T> Lariv<'a, T> {
     fn traverse_get(&self, mut li: LarivIndex) -> Option<*mut AtomicOption<T>> {
         let mut node = &self.list;
         if li.index as usize >= node.shared.cap {
-            return None
+            return None;
         };
         // traverse the node list and get the element
-        //println!("getting");
+        // println!("getting");
         while li.node > 0 {
             node = node.next.get()?;
             li.node -= 1
@@ -183,7 +184,7 @@ impl<'a, T> LarivNode<'a, T> {
         let mut index = node.shared.cursor.fetch_add(1, Ordering::AcqRel);
         // avoid recursion
         loop {
-            //println!("trying to insert on {index}");
+            // println!("trying to insert on {index}");
             // check availability and write the value
             break if index < node.shared.cap && let Some(mut pos) =
                 unsafe { &*node.ptr.load(Ordering::Relaxed).add(index) }.try_set()
@@ -191,7 +192,7 @@ impl<'a, T> LarivNode<'a, T> {
                 pos.write(element);
                 LarivIndex::new(node.nth, index)
             } else {
-                //println!("advancing");
+                // println!("advancing");
                 // whether the current thread reached the end of the node
                 let mut end = false;
                 // ask for the next index, checking if it's the last one in the buffer
@@ -199,7 +200,7 @@ impl<'a, T> LarivNode<'a, T> {
                         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |mut i| {
                             if i > node.shared.cap {
                                 i -= 1;
-                                //println!("i: {i}, cap: {}", node.cap);
+                                // println!("i: {i}, cap: {}", node.shared.cap);
                                 end = unlikely(i == node.shared.cap);
                                 Some(i % node.shared.cap)
                             } else {
@@ -211,9 +212,10 @@ impl<'a, T> LarivNode<'a, T> {
                     if let Some(next) = node.next.get() {
                         // traverse to the next node
                         // println!("Traversing to next node");
-                        node.shared.cursor_node_ptr.store(unsafe {
-                            *(next as *const AliasableBox<LarivNode<'a, T>>).cast::<*const LarivNode<'a, T>>()
-                        }.cast_mut(), Ordering::Release);
+                        node.shared.cursor_node_ptr.store(
+                            unsafe { *(next as *const AliasableBox<LarivNode<'a, T>>).cast() },
+                             Ordering::Release
+                        );
                         node.shared.cursor.store(0, Ordering::Release);
                         continue
                     } else if node.shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
@@ -259,7 +261,7 @@ impl<'a, T> LarivNode<'a, T> {
     }
 
     fn extend(&self, first_element: T) -> LarivIndex {
-        //println!("New node");
+        // println!("New node");
         // allocate buffer
         let (ptr, _, cap) = Vec::with_capacity(self.shared.cap).into_raw_parts();
         Lariv::<T>::init_buf::<AtomicOption<T>>(ptr, cap);
