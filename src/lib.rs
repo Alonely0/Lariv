@@ -203,7 +203,7 @@ impl<'a, T> LarivNode<'a, T> {
                             }
                         }).unwrap_or_else(|i| i);
                 node = unsafe { &*node.shared.cursor_node_ptr.load(Ordering::Acquire) };
-                if end {
+                if unlikely(end) {
                     if let Some(next) = node.next.get() {
                         // traverse to the next node
                         // println!("Traversing to next node");
