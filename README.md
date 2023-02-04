@@ -29,4 +29,5 @@ Note to self: Maybe I can get SIMD somewhere here, idk. I know hashbrown and das
 
 
 ### Conclusion
-Right now Lariv is the kind of thing services that require stable latencies would use, like e.g., Zoom, Discord.
+
+They're pretty much equal, but Lariv is slightly more predictable. Thus, applications that require consistent latencies like e.g., games, video conferences, among others, might prefer to use it. The difference is negligible though, and as I said earlier, I don't think Lariv is mature enough for production environments. It works, and you lose nothing by testing it.
