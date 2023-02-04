@@ -100,9 +100,7 @@ impl<'a, T> Lariv<'a, T> {
     #[cfg_attr(not(miri), allow(unused_variables, unused_mut))]
     #[inline]
     const fn init_buf<V: ~const Default>(ptr: *mut V, cap: usize) {
-        unsafe {
-            write_bytes(ptr, 0, cap);
-        }
+        unsafe { write_bytes(ptr, 0, cap) };
     }
 
     #[inline]
@@ -260,31 +258,30 @@ impl<'a, T> LarivNode<'a, T> {
         // allocate buffer
         let (ptr, _, cap) = Vec::with_capacity(self.shared.cap).into_raw_parts();
         Lariv::<T>::init_buf::<AtomicOption<T>>(ptr, cap);
-        unsafe {
-            // set first element
-            *ptr = AtomicOption::some(first_element);
-            // create node
-            let nth = self.nth + 1;
-            let node = Self::new(ptr, nth, self.shared);
-            let node_ptr = node.as_ref() as *const _ as *mut _;
-            debug_assert!(self.next.get().is_none());
-            // set next
-            self.next.set(node).unwrap_unchecked();
-            // update cursor
-            self.shared.nodes.fetch_add(1, Ordering::AcqRel);
-            self.shared.allocation_threshold.store(0, Ordering::Release);
-            self.shared
-                .cursor_node_ptr
-                .store(node_ptr, Ordering::Release);
-            // clear traverse bool
-            LarivIndex::new(nth, 0)
-        }
+
+        // set first element
+        unsafe { *ptr = AtomicOption::some(first_element) };
+        // create node
+        let nth = self.nth + 1;
+        let node = Self::new(ptr, nth, self.shared);
+        let node_ptr = node.as_ref() as *const _ as *mut _;
+        // set next
+        unsafe { self.next.set(node).unwrap_unchecked() };
+
+        // update cursor
+        self.shared.nodes.fetch_add(1, Ordering::AcqRel);
+        self.shared.allocation_threshold.store(0, Ordering::Release);
+        self.shared
+            .cursor_node_ptr
+            .store(node_ptr, Ordering::Release);
+        // clear traverse bool
+        LarivIndex::new(nth, 0)
     }
 
     #[inline]
     fn calculate_allocate_threshold(&self) -> isize {
         // 30% of total capacity
-        ((self.shared.nodes.load(Ordering::Acquire) * self.shared.cap) as f64 * 0.3).abs() as isize
+        ((self.shared.nodes.load(Ordering::Acquire) * self.shared.cap) as f64 * 0.3) as isize
     }
 }
 
