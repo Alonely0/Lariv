@@ -214,7 +214,7 @@ impl<'a, T> LarivNode<'a, T> {
                     } else if node.shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
                         // traverse the buffer list and check for empty spaces before allocating
                         // println!("Traversing to start");
-                        node.shared.allocation_threshold.store(self.calculate_allocate_threshold(), Ordering::Release);
+                        node.shared.allocation_threshold.store(node.calculate_allocate_threshold(), Ordering::Release);
                         node.shared.cursor_node_ptr.store(unsafe {
                             (*node.shared.head.get()).assume_init() as *const LarivNode<'a, T>
                         }.cast_mut(), Ordering::Release);
@@ -231,12 +231,12 @@ impl<'a, T> LarivNode<'a, T> {
                         li
                     } else {
                         // println!("waiting for reallocation; traversing");
-                        while self.shared.reallocating.load(Ordering::Acquire) {
+                        while node.shared.reallocating.load(Ordering::Acquire) {
                             // println!("aaaaaa");
                             spin_loop()
                         }
                         node = unsafe { &*node.shared.cursor_node_ptr.load(Ordering::Acquire) };
-                        index = self.shared.cursor.fetch_add(1, Ordering::AcqRel);
+                        index = node.shared.cursor.fetch_add(1, Ordering::AcqRel);
                         continue
                     }
                 } else {
