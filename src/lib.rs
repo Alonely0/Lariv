@@ -64,7 +64,7 @@ pub struct LarivIndex {
 struct SharedItems<'a, T> {
     head: SyncUnsafeCell<MaybeUninit<&'a LarivNode<'a, T>>>, // pointer to the first node. Set after initialization
     cursor: AtomicUsize,                                     // current index on current node
-    cursor_node_ptr: AtomicPtr<LarivNode<'a, T>>,            // current node of the list
+    cursor_ptr: AtomicPtr<LarivNode<'a, T>>,                 // current node of the list
     cap: usize,                                              // capacity (max elements)
     allocation_threshold: AtomicIsize, // set to 30% of the capacity after reaching the end
     reallocating: AtomicBool,          // spin lock for whether reallocation is happening
@@ -81,7 +81,7 @@ impl<'a, T> Lariv<'a, T> {
         let shared_items: &'a _ = Box::leak(Box::new(SharedItems {
             head: SyncUnsafeCell::new(MaybeUninit::uninit()),
             cursor: AtomicUsize::new(len),
-            cursor_node_ptr: AtomicPtr::new(invalid_mut(align_of::<LarivNode<'a, T>>())),
+            cursor_ptr: AtomicPtr::new(invalid_mut(align_of::<LarivNode<'a, T>>())),
             cap,
             allocation_threshold: AtomicIsize::new(0),
             reallocating: AtomicBool::new(false),
@@ -90,7 +90,7 @@ impl<'a, T> Lariv<'a, T> {
 
         // create head and set the shared pointer
         let head = LarivNode::new(ptr, 0, shared_items);
-        shared_items.cursor_node_ptr.store(
+        shared_items.cursor_ptr.store(
             head.as_ref() as *const LarivNode<'a, T> as *mut _,
             Ordering::Relaxed,
         );
@@ -103,11 +103,9 @@ impl<'a, T> Lariv<'a, T> {
         }
     }
 
-    /// Fills the buffer with initialized empty [`AtomicOption`]s
-    /// via the default trait. It can be used in const contexts.
-    #[cfg_attr(not(miri), allow(unused_variables, unused_mut))]
+    /// Zeroes the buffer, the same as a [`None`].
     #[inline]
-    const fn init_buf<V: ~const Default>(ptr: *mut V, cap: usize) {
+    const fn init_buf<V>(ptr: *mut V, cap: usize) {
         unsafe { write_bytes(ptr, 0, cap) };
     }
 
@@ -115,7 +113,7 @@ impl<'a, T> Lariv<'a, T> {
     pub fn push(&self, conn: T) -> LarivIndex {
         // call LarivNode::push() on the node currently on the cursor
         // if miri ever complains about a data race here, change this to SeqCst
-        unsafe { &*self.shared.cursor_node_ptr.load(Ordering::Acquire) }.push(conn)
+        unsafe { &*self.shared.cursor_ptr.load(Ordering::Acquire) }.push(conn)
     }
 
     #[must_use]
@@ -205,11 +203,11 @@ impl<'a, T> LarivNode<'a, T> {
                                 Some(i + 1)
                             }
                         }).unwrap_or_else(|i| i);
-                node = unsafe { &*node.shared.cursor_node_ptr.load(Ordering::Acquire) };
+                node = unsafe { &*node.shared.cursor_ptr.load(Ordering::Acquire) };
                 if unlikely(end) {
                     if let Some(next) = node.next.get() {
                         // traverse to the next node
-                        node.shared.cursor_node_ptr.store(
+                        node.shared.cursor_ptr.store(
                             unsafe { *(next as *const AliasableBox<LarivNode<'a, T>>).cast() },
                              Ordering::Release
                         );
@@ -218,7 +216,7 @@ impl<'a, T> LarivNode<'a, T> {
                     } else if node.shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
                         // traverse the buffer list and check for empty spaces before allocating
                         node.shared.allocation_threshold.store(node.calculate_allocate_threshold(), Ordering::Release);
-                        node.shared.cursor_node_ptr.store(unsafe {
+                        node.shared.cursor_ptr.store(unsafe {
                             (*node.shared.head.get()).assume_init() as *const LarivNode<'a, T>
                         }.cast_mut(), Ordering::Release);
                         node.shared.cursor.store(0, Ordering::Release);
@@ -228,18 +226,18 @@ impl<'a, T> LarivNode<'a, T> {
                     } else {
                         // wait for reallocation, just in case
                         while unlikely(node.shared.reallocating.load(Ordering::Acquire)) { spin_loop(); }
-                        
+
                         // update data
-                        node = unsafe { &*node.shared.cursor_node_ptr.load(Ordering::Acquire) };
+                        node = unsafe { &*node.shared.cursor_ptr.load(Ordering::Acquire) };
                         index = node.shared.cursor.fetch_add(1, Ordering::AcqRel);
                         continue
                     }
                 } else {
                     // wait for reallocation, just in case
                     while unlikely(node.shared.reallocating.load(Ordering::Acquire)) { spin_loop(); }
-                    
+
                     // update data
-                    node = unsafe { &*node.shared.cursor_node_ptr.load(Ordering::Acquire) };
+                    node = unsafe { &*node.shared.cursor_ptr.load(Ordering::Acquire) };
                     continue
                 }
             };
@@ -266,9 +264,7 @@ impl<'a, T> LarivNode<'a, T> {
         // update shared info
         self.shared.nodes.fetch_add(1, Ordering::AcqRel);
         self.shared.allocation_threshold.store(0, Ordering::Release);
-        self.shared
-            .cursor_node_ptr
-            .store(node_ptr, Ordering::Release);
+        self.shared.cursor_ptr.store(node_ptr, Ordering::Release);
         self.shared.reallocating.store(false, Ordering::Release);
         LarivIndex::new(nth, 0)
     }
