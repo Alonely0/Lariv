@@ -221,7 +221,7 @@ impl<'a, T> LarivNode<'a, T> {
                         }.cast_mut(), Ordering::Release);
                         node.shared.cursor.store(0, Ordering::Release);
                         continue
-                    } else if !unlikely(node.allocated.fetch_or(true, Ordering::AcqRel)) {
+                    } else if !unlikely(node.allocated.fetch_or(true, Ordering::Acquire)) {
                         node.extend(element)
                     } else {
                         // wait for reallocation, just in case
