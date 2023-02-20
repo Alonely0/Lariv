@@ -17,7 +17,7 @@ use std::{
     cell::SyncUnsafeCell,
     fmt::Debug,
     hint::spin_loop,
-    intrinsics::unlikely,
+    intrinsics::{unlikely, likely},
     mem::{align_of, transmute, ManuallyDrop, MaybeUninit},
     ops::Index,
     ptr::{invalid_mut, write_bytes},
@@ -38,7 +38,6 @@ mod tests;
 
 /// Linked Atomic Vector
 pub struct Lariv<'a, T> {
-    // len: AtomicUsize,                     // length (occupied)
     list: AliasableBox<LarivNode<'a, T>>, // linked list to buffers
     shared: &'a SharedItems<'a, T>,       // shared items across nodes
 }
@@ -74,6 +73,11 @@ struct SharedItems<'a, T> {
 impl<'a, T> Lariv<'a, T> {
     #[must_use]
     pub fn new(buf_cap: usize) -> Self {
+        // tbh idk
+        if buf_cap < 3 {
+            panic!("For some reason buf_cap must be more than 3!")
+        }
+
         // allocate
         let (ptr, len, cap) = Vec::with_capacity(buf_cap).into_raw_parts();
         Self::init_buf(ptr, cap);
@@ -184,7 +188,7 @@ impl<'a, T> LarivNode<'a, T> {
         // avoid recursion
         loop {
             // check availability and write the value
-            break if index < node.shared.cap && let Some(mut pos) =
+            break if likely(index < node.shared.cap) && let Some(mut pos) =
                 unsafe { &*node.ptr.load(Ordering::Relaxed).add(index) }.try_set()
             {
                 pos.write(element);
