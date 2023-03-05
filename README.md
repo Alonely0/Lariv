@@ -12,8 +12,7 @@ Miri doesn't complain. If you encounter a bug, open an issue please. I don't thi
 
 # Performance
 
-Very performant, as far as I am aware of. If you have a suggestion for improving performance; I pray you to open a PR please. Right now is on par with dashmap, depending on the day Lariv outperforms dashmap for 2ms and sometimes it's the other way around. However, Lariv's performance is much more stable and predictable, while dashmap is... nuts in comparison. I want that to change. I want to be better than dashmap. Meaningfully better. Period.
-Note to self: Maybe I can get SIMD somewhere here, idk. I know hashbrown and dashmap do a lot of naughty tricks, I should take notes.
+Very performant, as far as I am aware of. If you have a suggestion for improving performance; I pray you to open a PR please. Right now it is on par with dashmap, depending on the day Lariv outperforms dashmap for 2ms and sometimes it's the other way around.
 
 
 ## Delta of benchmarks in two different days, same state of the computer (no programs opened, etc)
