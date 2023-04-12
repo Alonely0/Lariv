@@ -6,13 +6,6 @@
 #![feature(const_ptr_write)]
 #![feature(strict_provenance)]
 
-/* TODO
-Add a Vector-like thing with all the pointers to the buffers,
-so the get speed is O(1) instead of O(n). this adds some
-overhead to the extend function but it is what it is. You shouldn't
-be allocating very frequently anyway.
-*/
-
 use std::{
     cell::SyncUnsafeCell,
     fmt::Debug,
@@ -108,7 +101,7 @@ impl<'a, T> Lariv<'a, T> {
     }
 
     /// Zeroes the buffer, the same as a [`None`].
-    #[inline]
+    #[inline(always)]
     const fn init_buf<V>(ptr: *mut V, cap: usize) {
         unsafe { write_bytes(ptr, 0, cap) };
     }
@@ -138,7 +131,7 @@ impl<'a, T> Lariv<'a, T> {
 
     #[must_use]
     #[inline]
-    fn traverse_get(&self, mut li: LarivIndex) -> Option<*mut AtomicOption<T>> {
+    fn traverse_get(&self, mut li: LarivIndex) -> Option<*const AtomicOption<T>> {
         let mut node = &self.list;
         if li.index as usize >= node.shared.cap {
             return None;
@@ -201,7 +194,7 @@ impl<'a, T> LarivNode<'a, T> {
                         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |mut i| {
                             if i > node.shared.cap {
                                 i -= 1;
-                                end = unlikely(i == node.shared.cap);
+                                end = i == node.shared.cap;
                                 Some(i % node.shared.cap)
                             } else {
                                 Some(i + 1)
@@ -219,7 +212,10 @@ impl<'a, T> LarivNode<'a, T> {
                         continue
                     } else if node.shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
                         // traverse the buffer list and check for empty spaces before allocating
-                        node.shared.allocation_threshold.store(node.calculate_allocate_threshold(), Ordering::Release);
+                        node.shared.allocation_threshold.store(
+                            node.calculate_allocate_threshold(),
+                            Ordering::Release
+                        );
                         node.shared.cursor_ptr.store(unsafe {
                             (*node.shared.head.get()).assume_init() as *const LarivNode<'a, T>
                         }.cast_mut(), Ordering::Release);
@@ -248,6 +244,7 @@ impl<'a, T> LarivNode<'a, T> {
         }
     }
 
+    #[cold]
     #[inline]
     fn extend(&self, first_element: T) -> LarivIndex {
         // set flag
