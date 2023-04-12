@@ -184,20 +184,16 @@ impl<'a, T> LarivNode<'a, T> {
                 pos.write(element);
                 LarivIndex::new(node.nth, index)
             } else {
-                // whether the current thread reached the end of the node
-                let mut end = false;
                 // ask for the next index, checking if it's the last one in the buffer
-                index = node.shared.cursor.fetch_update(Ordering::AcqRel, Ordering::Acquire, |mut i| {
+                index = node.shared.cursor.fetch_update(Ordering::AcqRel, Ordering::Acquire, |i| {
                     if i > node.shared.cap {
-                        i -= 1;
-                        end = i == node.shared.cap;
-                        Some(i % node.shared.cap)
+                        Some((i - 1) % node.shared.cap)
                     } else {
                         Some(i + 1)
                     }
                 }).unwrap_or_else(|i| i);
                 node = unsafe { &*node.shared.cursor_ptr.load(Ordering::Acquire) };
-                if unlikely(end) {
+                if unlikely(index == 0) {
                     if let Some(next) = node.next.get() {
                         // traverse to the next node
                         node.shared.cursor_ptr.store(
@@ -205,7 +201,6 @@ impl<'a, T> LarivNode<'a, T> {
                              Ordering::Release
                         );
                         node.shared.cursor.store(0, Ordering::Release);
-                        continue
                     } else if node.shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
                         node.shared.allocation_threshold.store(
                             node.calculate_allocate_threshold(),
@@ -215,18 +210,11 @@ impl<'a, T> LarivNode<'a, T> {
                             (*node.shared.head.get()).assume_init() as *const LarivNode<'a, T>
                         }.cast_mut(), Ordering::Release);
                         node.shared.cursor.store(0, Ordering::Release);
-                        continue
-                    } else if !unlikely(node.allocated.fetch_or(true, Ordering::Acquire)) {
-                        node.extend(element)
-                    } else {
-                        // update data
-                        node = unsafe { &*node.shared.cursor_ptr.load(Ordering::Acquire) };
-                        index = node.shared.cursor.fetch_add(1, Ordering::AcqRel);
-                        continue
+                    } else if likely(!node.allocated.fetch_or(true, Ordering::Acquire)) {
+                        break node.extend(element)
                     }
+                    continue
                 } else {
-                    // update data
-                    node = unsafe { &*node.shared.cursor_ptr.load(Ordering::Acquire) };
                     continue
                 }
             };
