@@ -14,7 +14,7 @@ Miri doesn't complain. If you encounter a bug, open an issue please.
 
 Very performant, as far as I am aware of. If you have a suggestion for improving performance; I pray you to open a PR please. It is significantly faster than DashMap (see below).
 
-## Comparison with DashMap, 10000 request per sample
+## Comparison with DashMap, 30000 operations per sample
 
 ### Lariv
 
