@@ -7,15 +7,14 @@ It is recommended to over-budget on the size by quite a lot, at least 50% of the
 
 # Safety
 
-Miri doesn't complain. If you encounter a bug, open an issue please. I don't think this is battle-tested enough for being production ready, I can't really promise anything. Right now it works wellm but is pretty basic, take a look at the `src/tests.rs` file and judge it by yourself. I would like people to review the code and fix any bugs that they might spot.
+Miri doesn't complain. If you encounter a bug, open an issue please.
 
 
 # Performance
 
-Very performant, as far as I am aware of. If you have a suggestion for improving performance; I pray you to open a PR please. Right now it is on par with dashmap, depending on the day Lariv outperforms dashmap for 2ms and sometimes it's the other way around.
+Very performant, as far as I am aware of. If you have a suggestion for improving performance; I pray you to open a PR please. It is significantly faster than DashMap (see below).
 
-
-## Delta of benchmarks in two different days, same state of the computer (no programs opened, etc)
+## Comparison with DashMap, 10000 request per sample
 
 ### Lariv
 
@@ -29,4 +28,4 @@ Very performant, as far as I am aware of. If you have a suggestion for improving
 
 ### Conclusion
 
-They're pretty much equal, but Lariv is slightly more predictable. Thus, applications that require consistent latencies like e.g., games, video conferences, among others, might prefer to use it. The difference is negligible though, and as I said earlier, I don't think Lariv is mature enough for production environments. It works, and you lose nothing by testing it.
+Lariv is quite faster than DashMap, and has a more consistent latency. Thus, applications that require consistent latencies like e.g., games, video conferences, among others, might prefer to use it. I think Lariv is ready for production use and it works well, but I don't deem myself responsible for crashes on production, thermonuclear war, or your soon-to-be-wife breaking up with you because you had to debug prod during your wedding; and so do DashMap's maintainers.
