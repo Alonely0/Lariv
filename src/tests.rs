@@ -1,9 +1,4 @@
-use std::{
-    sync::{
-        Mutex,
-    },
-    thread::scope,
-};
+use std::{sync::Mutex, thread::scope};
 
 use crate::{Lariv, LarivIndex};
 
@@ -29,7 +24,11 @@ pub fn correctness() {
     let c = &r;
     scope(|s| {
         for i in 1..=100 {
-            s.spawn(move || c.lock().unwrap().push((buf.push(i.to_string()), i.to_string())));
+            s.spawn(move || {
+                c.lock()
+                    .unwrap()
+                    .push((buf.push(i.to_string()), i.to_string()))
+            });
         }
     });
     for (i, e) in r.get_mut().unwrap().iter() {

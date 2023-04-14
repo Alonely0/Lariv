@@ -118,12 +118,11 @@ impl<'a, T> Lariv<'a, T> {
 
     #[inline]
     pub fn remove(&self, index: LarivIndex) {
-        if let Some(e) = self.traverse_get(index) {
-            unsafe { &*e }.empty();
-            self.shared
-                .allocation_threshold
-                .fetch_sub(1, Ordering::AcqRel);
-        }
+        let Some(e) = self.traverse_get(index) else { return };
+        unsafe { &*e }.empty();
+        self.shared
+            .allocation_threshold
+            .fetch_sub(1, Ordering::AcqRel);
     }
 
     #[must_use]
@@ -178,11 +177,11 @@ impl<'a, T> LarivNode<'a, T> {
         // avoid recursion
         loop {
             // check availability and write the value
-            break if likely(index < node.shared.cap) && let Some(mut pos) =
+            if likely(index < node.shared.cap) && let Some(mut pos) =
                 unsafe { &*node.ptr.load(Ordering::Relaxed).add(index) }.try_set()
             {
                 pos.write(element);
-                LarivIndex::new(node.nth, index)
+                break LarivIndex::new(node.nth, index)
             } else {
                 // ask for the next index, checking if it's the last one in the buffer
                 index = node.shared.cursor.fetch_update(Ordering::AcqRel, Ordering::Acquire, |i| {
@@ -213,9 +212,6 @@ impl<'a, T> LarivNode<'a, T> {
                     } else if likely(!node.allocated.fetch_or(true, Ordering::Acquire)) {
                         break node.extend(element)
                     }
-                    continue
-                } else {
-                    continue
                 }
             };
         }
