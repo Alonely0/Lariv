@@ -74,3 +74,9 @@ pub fn iter_mut() {
     });
     assert_eq!(lariv.iter_mut().count(), 100)
 }
+
+#[test]
+#[should_panic]
+pub fn deadlock_cap_threshold() {
+    let _ = Lariv::<()>::new(3);
+}

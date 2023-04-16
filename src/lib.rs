@@ -64,7 +64,7 @@ impl<'a, T> Lariv<'a, T> {
     #[must_use]
     pub fn new(buf_cap: usize) -> Self {
         // tbh idk
-        if buf_cap < 3 {
+        if buf_cap <= 3 {
             panic!("For some reason buf_cap must be more than 3!")
         }
 
