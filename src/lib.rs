@@ -23,6 +23,7 @@ use once_cell::sync::OnceCell;
 
 use option::AtomicOption;
 
+mod iter;
 mod option;
 #[cfg(test)]
 mod tests;

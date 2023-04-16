@@ -10,8 +10,9 @@ pub fn general() {
         for i in 1..=100 {
             let li = LarivIndex::new(i / 10, i - 1);
             s.spawn(move || buf.push(i));
-            s.spawn(move || buf.get(li));
-            s.spawn(move || buf.remove(li));
+            s.spawn(move || {buf.get(li);});
+            s.spawn(move || {buf.get_mut(li);});
+            s.spawn(move || buf.take(li));
         }
     });
 }
@@ -32,7 +33,43 @@ pub fn correctness() {
         }
     });
     for (i, e) in r.get_mut().unwrap().iter() {
-        assert_eq!(*e, *lariv.get(*i).unwrap().read().unwrap());
+        assert_eq!(*e, *lariv.get(*i).unwrap());
         lariv.remove(*i)
     }
+}
+
+#[test]
+pub fn into_iter() {
+    let lariv = Lariv::new(10);
+    let buf = &lariv;
+    scope(|s| {
+        for i in 1..=100usize {
+            s.spawn(move || buf.push(i));
+        }
+    });
+    assert_eq!(lariv.into_iter().count(), 100)
+}
+
+#[test]
+pub fn iter() {
+    let lariv = Lariv::new(10);
+    let buf = &lariv;
+    scope(|s| {
+        for i in 1..=100usize {
+            s.spawn(move || buf.push(i));
+        }
+    });
+    assert_eq!(lariv.iter().count(), 100)   
+}
+
+#[test]
+pub fn iter_mut() {
+    let lariv = Lariv::new(10);
+    let buf = &lariv;
+    scope(|s| {
+        for i in 1..=100usize {
+            s.spawn(move || buf.push(i));
+        }
+    });
+    assert_eq!(lariv.iter_mut().count(), 100)
 }
