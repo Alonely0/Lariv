@@ -77,10 +77,6 @@ jobs:
           rust-version: nightly
           components: rustfmt
       - name: Commit formatted files
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "<>"
-          git remote set-url origin https://Alonely0:${{ secrets.TOKEN }}@github.com/Alonely0/Lariv.git
-          git add .
-          git diff-index --quiet HEAD || git commit -m "Format code"
-          git push origin HEAD
+      - uses: mbrobbel/rustfmt-check@master
+        with:
+          token: ${{ secrets.TOKEN }}
