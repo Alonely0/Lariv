@@ -9,7 +9,7 @@ use std::{
     cell::SyncUnsafeCell,
     fmt::Debug,
     intrinsics::{likely, unlikely},
-    mem::{transmute, ManuallyDrop, MaybeUninit},
+    mem::{transmute, MaybeUninit},
     ptr::{write_bytes, NonNull},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
@@ -266,21 +266,18 @@ where
     T: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut next = Some(&self.list);
-        while let Some(node) = next {
-            writeln!(f, "{:?}", unsafe {
-                ManuallyDrop::new(Vec::<AtomicOption<T>>::from_raw_parts(
-                    node.ptr.load(Ordering::Relaxed),
-                    node.shared.cap,
-                    node.shared.cap,
-                ))
-                .iter()
-                .map(|x| x.get())
-                .collect::<Vec<_>>()
-            })?;
-            next = node.next.get();
-        }
-        write!(f, "")
+        write!(f, "[")?;
+        let mut x = false;
+        for e in self.iter() {
+            if likely(!x) {
+                write!(f, "{e:?}")?;
+                x = true;
+            } else {
+                write!(f, ", {e:?}")?;
+            }
+        };
+        
+        write!(f, "]")
     }
 }
 

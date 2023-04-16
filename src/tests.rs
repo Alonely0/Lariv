@@ -13,6 +13,7 @@ pub fn general() {
             s.spawn(move || {buf.get(li);});
             s.spawn(move || {buf.get_mut(li);});
             s.spawn(move || buf.take(li));
+            s.spawn(move || buf.remove(li));
         }
     });
 }
