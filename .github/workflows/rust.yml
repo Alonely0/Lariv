@@ -55,3 +55,31 @@ jobs:
         env:
           MIRIFLAGS: "-Zmiri-backtrace=full -Zmiri-ignore-leaks -Zmiri-disable-isolation"
         run: cargo miri test --all-features
+  formatting:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup | Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Setup | Checkout
+        uses: actions/checkout@v2
+      - name: Setup | Rust
+        uses: ATiltedTree/setup-rust@v1
+        with:
+          rust-version: nightly
+          components: rustfmt
+      - name: Commit formatted files
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "<>"
+          git add .
+          git diff-index --quiet HEAD || git commit -m "Format code"
+          git push origin HEAD
