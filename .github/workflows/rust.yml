@@ -1,0 +1,42 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        rust-version: [ nightly ]
+
+    steps:
+    - name: Set up Rust ${{ matrix.rust-version }}
+      uses: actions/setup-rust@v1.0.5
+      with:
+        rust-version: ${{ matrix.rust-version }}
+        profile: minimal
+
+    - name: Cache dependencies
+      uses: actions/cache@v2.1.8
+      with:
+        path: ~/.cargo
+        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Install Miri
+      run: rustup component add miri
+      
+    - name: Install Clippy
+      run: rustup component add clippy
+
+    - name: Check with Clippy
+      run: cargo clippy
+
+    - name: Test with Miri
+      env:
+        MIRIFLAGS: "-Zmiri-backtrace=full -Zmiri-ignore-leaks -Zmiri-disable-isolation"
+      run: cargo miri test --all-features
