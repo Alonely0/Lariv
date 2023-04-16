@@ -77,6 +77,6 @@ jobs:
           rust-version: nightly
           components: rustfmt
       - name: Commit formatted files
-      - uses: mbrobbel/rustfmt-check@master
+        uses: mbrobbel/rustfmt-check@master
         with:
           token: ${{ secrets.TOKEN }}
