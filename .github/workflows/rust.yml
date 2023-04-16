@@ -1,4 +1,4 @@
-name: Rust CI
+name: Rust
 
 on:
   push:
@@ -7,36 +7,51 @@ on:
     branches: [ '*' ]
 
 jobs:
-  build:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        rust-version: [ nightly ]
-
     steps:
-    - name: Set up Rust ${{ matrix.rust-version }}
-      uses: actions/setup-rust@v1.0.5
-      with:
-        rust-version: ${{ matrix.rust-version }}
-        profile: minimal
-
-    - name: Cache dependencies
-      uses: actions/cache@v2.1.8
-      with:
-        path: ~/.cargo
-        key: ${{ runner.os }}-rust-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Install Miri
-      run: rustup component add miri
-      
-    - name: Install Clippy
-      run: rustup component add clippy
-
-    - name: Check with Clippy
-      run: cargo clippy
-
-    - name: Test with Miri
-      env:
-        MIRIFLAGS: "-Zmiri-backtrace=full -Zmiri-ignore-leaks -Zmiri-disable-isolation"
-      run: cargo miri test --all-features
+      - name: Setup | Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Setup | Checkout
+        uses: actions/checkout@v3.5.2
+      - name: Setup | Rust
+        uses: ATiltedTree/setup-rust@v1
+        with:
+          rust-version: nightly
+          components: clippy
+      - name: Lint
+        run: cargo clippy
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup | Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Setup | Checkout
+        uses: actions/checkout@v2
+      - name: Setup | Rust
+        uses: ATiltedTree/setup-rust@v1
+        with:
+          rust-version: nightly
+          components: miri
+      - name: Test
+        env:
+          MIRIFLAGS: "-Zmiri-backtrace=full -Zmiri-ignore-leaks -Zmiri-disable-isolation"
+        run: cargo miri test --all-features
