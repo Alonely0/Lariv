@@ -11,11 +11,10 @@ use std::{
     fmt::Debug,
     intrinsics::{likely, unlikely},
     mem::{align_of, transmute, ManuallyDrop, MaybeUninit},
-    ops::Index,
     ptr::{invalid_mut, write_bytes},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
-        RwLock,
+        RwLockReadGuard, RwLockWriteGuard,
     },
 };
 
@@ -110,10 +109,14 @@ impl<'a, T> Lariv<'a, T> {
         unsafe { &*self.shared.cursor_ptr.load(Ordering::Acquire) }.push(conn)
     }
 
-    #[must_use]
     #[inline]
-    pub fn get(&self, index: LarivIndex) -> Option<&RwLock<T>> {
+    pub fn get(&self, index: LarivIndex) -> Option<RwLockReadGuard<T>> {
         self.traverse_get(index).and_then(|p| unsafe { &*p }.get())
+    }
+
+    #[inline]
+    pub fn get_mut(&self, index: LarivIndex) -> Option<RwLockWriteGuard<T>> {
+        self.traverse_get(index).and_then(|p| unsafe { &*p }.get_mut())
     }
 
     #[inline]
@@ -125,11 +128,21 @@ impl<'a, T> Lariv<'a, T> {
             .fetch_sub(1, Ordering::AcqRel);
     }
 
+    #[inline]
+    pub fn take(&self, index: LarivIndex) -> Option<T> {
+        self.shared
+            .allocation_threshold
+            .fetch_sub(1, Ordering::AcqRel);
+        unsafe { &*self.traverse_get(index)? }.take()
+    }
+
     #[must_use]
     #[inline]
     fn traverse_get(&self, mut li: LarivIndex) -> Option<*const AtomicOption<T>> {
         let mut node = &self.list;
-        if li.index as usize >= node.shared.cap {
+        if li.index as usize >= node.shared.cap
+            || li.node as usize >= node.shared.nodes.load(Ordering::Acquire)
+        {
             return None;
         };
         // traverse the node list and get the element
@@ -140,18 +153,19 @@ impl<'a, T> Lariv<'a, T> {
         Some(unsafe { node.ptr.load(Ordering::Relaxed).add(li.index as usize) })
     }
 
-    #[must_use]
     #[inline]
-    pub fn cap(&self) -> usize {
-        self.shared.nodes.load(Ordering::Acquire) * self.shared.cap
+    pub fn node_capacity(&self) -> usize {
+        self.shared.cap
     }
-}
 
-impl<'a, T> Index<LarivIndex> for Lariv<'a, T> {
-    type Output = RwLock<T>;
     #[inline]
-    fn index(&self, index: LarivIndex) -> &Self::Output {
-        self.get(index).expect("index out of bounds")
+    pub fn node_num(&self) -> usize {
+        self.shared.nodes.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.node_num() * self.node_capacity()
     }
 }
 
@@ -261,7 +275,7 @@ where
                     node.shared.cap,
                 ))
                 .iter()
-                .map(|x| x.get().and_then(|x| x.read().ok()))
+                .map(|x| x.get())
                 .collect::<Vec<_>>()
             })?;
             next = node.next.get();
@@ -310,7 +324,18 @@ impl From<LarivIndex> for u128 {
     #[inline]
     fn from(value: LarivIndex) -> Self {
         u128::from_le_bytes(unsafe {
-            transmute([value.node.to_le_bytes(), value.index.to_le_bytes()])
+            transmute::<[[u8; 8]; 2], [u8; 16]>([
+                value.node.to_le_bytes(),
+                value.index.to_le_bytes(),
+            ])
         })
+    }
+}
+
+impl From<u128> for LarivIndex {
+    #[inline]
+    fn from(value: u128) -> Self {
+        let [node, index] = unsafe { transmute::<[u8; 16], [u64; 2]>(u128::to_le_bytes(value)) };
+        LarivIndex { node, index }
     }
 }

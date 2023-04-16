@@ -1,9 +1,9 @@
 use std::{
     fmt::Debug,
-    mem::MaybeUninit,
+    mem::{replace, transmute, MaybeUninit},
     sync::{
         atomic::{AtomicBool, Ordering},
-        RwLock, RwLockWriteGuard,
+        RwLock, RwLockReadGuard, RwLockWriteGuard,
     },
 };
 
@@ -11,7 +11,6 @@ use std::{
 pub struct AtomicOption<T> {
     tag: AtomicBool,
     value: RwLock<MaybeUninit<T>>,
-    // phantom: PhantomData<T>,
 }
 
 /// Sets the tag to true after drop. Grabs a reference
@@ -29,7 +28,6 @@ impl<T> AtomicOption<T> {
         Self {
             tag: AtomicBool::new(true),
             value: RwLock::new(MaybeUninit::new(x)),
-            // phantom: PhantomData,
         }
     }
 
@@ -38,7 +36,6 @@ impl<T> AtomicOption<T> {
         Self {
             tag: AtomicBool::new(false),
             value: RwLock::new(MaybeUninit::uninit()),
-            // phantom: PhantomData,
         }
     }
 
@@ -52,9 +49,36 @@ impl<T> AtomicOption<T> {
     }
 
     #[inline]
-    pub fn get(&self) -> Option<&RwLock<T>> {
-        if self.tag.load(Ordering::Acquire) {
-            Some(unsafe { &*(&self.value as *const RwLock<MaybeUninit<T>> as *const _) })
+    pub fn get(&self) -> Option<RwLockReadGuard<T>> {
+        if let Ok(v) = self.value.read() && self.tag.load(Ordering::Acquire) {
+            unsafe {
+                Some(transmute::<RwLockReadGuard<MaybeUninit<T>>, RwLockReadGuard<T>>(
+                    v,
+                ))
+            }
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn get_mut(&self) -> Option<RwLockWriteGuard<T>> {
+        if let Ok(v) = self.value.write() && self.tag.load(Ordering::Acquire) {
+            unsafe {
+                Some(transmute::<RwLockWriteGuard<MaybeUninit<T>>, RwLockWriteGuard<T>>(
+                    v,
+                ))
+            }
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn take(&self) -> Option<T> {
+        if let Ok(mut guard) = self.value.write() && self.tag.load(Ordering::Acquire) {
+            self.tag.store(false, Ordering::Release);
+            Some(unsafe { replace(&mut *guard, MaybeUninit::<T>::uninit()).assume_init() })
         } else {
             None
         }
