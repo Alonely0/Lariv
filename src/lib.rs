@@ -4,14 +4,13 @@
 #![feature(let_chains)]
 #![feature(const_trait_impl)]
 #![feature(const_ptr_write)]
-#![feature(strict_provenance)]
 
 use std::{
     cell::SyncUnsafeCell,
     fmt::Debug,
     intrinsics::{likely, unlikely},
-    mem::{align_of, transmute, ManuallyDrop, MaybeUninit},
-    ptr::{invalid_mut, write_bytes},
+    mem::{transmute, ManuallyDrop, MaybeUninit},
+    ptr::{write_bytes, NonNull},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
         RwLockReadGuard, RwLockWriteGuard,
@@ -76,7 +75,7 @@ impl<'a, T> Lariv<'a, T> {
         let shared_items: &'a _ = Box::leak(Box::new(SharedItems {
             head: SyncUnsafeCell::new(MaybeUninit::uninit()),
             cursor: AtomicUsize::new(len),
-            cursor_ptr: AtomicPtr::new(invalid_mut(align_of::<LarivNode<'a, T>>())),
+            cursor_ptr: AtomicPtr::new(NonNull::dangling().as_ptr()),
             cap,
             allocation_threshold: AtomicIsize::new(0),
             nodes: AtomicUsize::new(1),
