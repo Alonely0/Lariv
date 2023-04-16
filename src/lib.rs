@@ -116,7 +116,8 @@ impl<'a, T> Lariv<'a, T> {
 
     #[inline]
     pub fn get_mut(&self, index: LarivIndex) -> Option<RwLockWriteGuard<T>> {
-        self.traverse_get(index).and_then(|p| unsafe { &*p }.get_mut())
+        self.traverse_get(index)
+            .and_then(|p| unsafe { &*p }.get_mut())
     }
 
     #[inline]
@@ -275,8 +276,8 @@ where
             } else {
                 write!(f, ", {e:?}")?;
             }
-        };
-        
+        }
+
         write!(f, "]")
     }
 }

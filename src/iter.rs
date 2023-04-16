@@ -51,7 +51,11 @@ macro_rules! iter {
         let mut ret = None;
         while ret.is_none() {
             if unlikely($x.next_index >= $x.buf.node_capacity()) {
-                $x.current_node = unsafe { NonNull::new_unchecked((&*$x.current_node.as_ptr()).next.get()?.as_ref() as *const _ as *mut _)};
+                $x.current_node = unsafe {
+                    NonNull::new_unchecked(
+                        (&*$x.current_node.as_ptr()).next.get()?.as_ref() as *const _ as *mut _
+                    )
+                };
                 $x.next_index = 0;
             }
             ret = unsafe {
@@ -73,7 +77,9 @@ impl<'a, T> IntoIterator for Lariv<'a, T> {
 
     fn into_iter(self) -> Self::IntoIter {
         IntoIter {
-            current_node: unsafe {NonNull::new_unchecked(self.list.as_ref() as *const _ as *mut _)},
+            current_node: unsafe {
+                NonNull::new_unchecked(self.list.as_ref() as *const _ as *mut _)
+            },
             buf: ManuallyDrop::new(self),
             next_index: 0,
         }

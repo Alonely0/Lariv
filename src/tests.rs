@@ -10,8 +10,12 @@ pub fn general() {
         for i in 1..=100 {
             let li = LarivIndex::new(i / 10, i - 1);
             s.spawn(move || buf.push(i));
-            s.spawn(move || {buf.get(li);});
-            s.spawn(move || {buf.get_mut(li);});
+            s.spawn(move || {
+                buf.get(li);
+            });
+            s.spawn(move || {
+                buf.get_mut(li);
+            });
             s.spawn(move || buf.take(li));
             s.spawn(move || buf.remove(li));
         }
@@ -60,7 +64,7 @@ pub fn iter() {
             s.spawn(move || buf.push(i));
         }
     });
-    assert_eq!(lariv.iter().count(), 100)   
+    assert_eq!(lariv.iter().count(), 100)
 }
 
 #[test]

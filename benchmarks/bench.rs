@@ -18,7 +18,9 @@ fn bench() {
         for i in 1..=10000 {
             let li = LarivIndex::new(i / 5000, (i % 5000) - 1);
             s.spawn(move || buf.push(i));
-            s.spawn(move || {buf.get(li);});
+            s.spawn(move || {
+                buf.get(li);
+            });
             s.spawn(move || buf.remove(li));
         }
     });
