@@ -84,3 +84,28 @@ pub fn iter_mut() {
 pub fn deadlock_cap_threshold() {
     let _ = Lariv::<()>::new(3);
 }
+
+#[test]
+fn readme_example() {
+    // The Lariv is backed by a collection of buffers
+    // distributed across nodes, and you need to specify
+    // the amount of elements each one holds at most.
+    let capacity = 50;
+    let lariv = Lariv::new(capacity);
+    let ptr = &lariv;
+    scope(|s| {
+        for i in 1..=330 {
+            // Some processing that is pushed to the Lariv.
+            // The insertion order is completely random,
+            // if you need it to be sorted append the correct index
+            // with the data, `i` on this case, and sort it later.
+            // The alternative is having threads starve waiting on
+            // a lock, which often is not ideal at best.
+            s.spawn(move || ptr.push(i.to_string()));
+        }
+    });
+    // Iterate the Lariv and do something with the data.
+    for e in lariv {
+        println!("{e}");
+    }
+}

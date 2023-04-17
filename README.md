@@ -5,6 +5,37 @@ Lariv is a thread-safe, self-memory-managed vector with no guaranteed sequential
 It is recommended to over-budget on the size by quite a lot, at least 50% of the averaged expected occupied size, and ideally 100% or 200%. This is required to keep data contention low, and avoid having threads fighting over the available spaces. Reallocations only happen when the algorithm assumes the buffer is *kind of* full, and this either happens when (a) it is full, or (b) elements aren't actually getting deleted (less than 30% since the last check) and that could and will impact performance. That is actually a bug, but I made it a feature and added fancy percentages.
 
 
+# Code Examples
+
+```rs
+use lariv::{Lariv, LarivIndex};
+
+fn example() {
+    // The Lariv is backed by a collection of buffers
+    // distributed across nodes, and you need to specify
+    // the amount of elements each one holds at most.
+    let capacity = 50;
+    let lariv = Lariv::new(capacity);
+    let ptr = &lariv;
+    scope(|s| {
+        for i in 1..=330 {
+            // Some processing that is pushed to the Lariv.
+            // The insertion order is completely random,
+            // if you need it to be sorted append the correct index
+            // with the data, `i` on this case, and sort it later.
+            // The alternative is having threads starve waiting on
+            // a lock, which often is not ideal at best.
+            s.spawn(move || ptr.push(i.to_string()));
+        }
+    });
+    // Iterate the Lariv and do something with the data.
+    for e in lariv {
+        println!("{e}");
+    }
+}
+```
+
+
 # Safety
 
 Miri doesn't complain. If you encounter a bug, open an issue please.
