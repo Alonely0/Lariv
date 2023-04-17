@@ -29,7 +29,7 @@ pub fn correctness() {
     let mut r = Mutex::new(Vec::<(LarivIndex, String)>::with_capacity(100));
     let c = &r;
     scope(|s| {
-        for i in 1..=100 {
+        for i in 1..=330 {
             s.spawn(move || {
                 c.lock()
                     .unwrap()

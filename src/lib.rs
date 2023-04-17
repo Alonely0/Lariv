@@ -10,7 +10,7 @@ use std::{
     fmt::Debug,
     intrinsics::{likely, unlikely},
     mem::{transmute, MaybeUninit},
-    ptr::{write_bytes, NonNull},
+    ptr::{copy_nonoverlapping, write_bytes, NonNull},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
         RwLockReadGuard, RwLockWriteGuard,
@@ -58,6 +58,7 @@ struct SharedItems<'a, T> {
     cap: usize,                                              // capacity (max elements)
     allocation_threshold: AtomicIsize, // set to 30% of the capacity after reaching the end
     nodes: AtomicUsize,                // nodes allocated. Used for calculating capacity
+    buffers: (AtomicPtr<AtomicPtr<AtomicOption<T>>>, AtomicUsize),
 }
 
 impl<'a, T> Lariv<'a, T> {
@@ -79,6 +80,14 @@ impl<'a, T> Lariv<'a, T> {
             cap,
             allocation_threshold: AtomicIsize::new(0),
             nodes: AtomicUsize::new(1),
+            buffers: (
+                AtomicPtr::new(
+                    Vec::<AtomicPtr<AtomicOption<T>>>::with_capacity(16)
+                        .into_raw_parts()
+                        .0,
+                ),
+                AtomicUsize::new(16),
+            ),
         }));
 
         // create head and set the shared pointer
@@ -87,7 +96,14 @@ impl<'a, T> Lariv<'a, T> {
             head.as_ref() as *const LarivNode<'a, T> as *mut _,
             Ordering::Relaxed,
         );
-        unsafe { (*shared_items.head.get()).write(&*(head.as_ref() as *const _)) };
+        unsafe {
+            (*shared_items.head.get()).write(&*(head.as_ref() as *const _));
+            shared_items
+                .buffers
+                .0
+                .load(Ordering::Relaxed)
+                .write(AtomicPtr::new(head.ptr.load(Ordering::Relaxed)))
+        };
 
         // return
         Self {
@@ -111,18 +127,17 @@ impl<'a, T> Lariv<'a, T> {
 
     #[inline]
     pub fn get(&self, index: LarivIndex) -> Option<RwLockReadGuard<T>> {
-        self.traverse_get(index).and_then(|p| unsafe { &*p }.get())
+        self.get_ptr(index).and_then(|p| unsafe { &*p }.get())
     }
 
     #[inline]
     pub fn get_mut(&self, index: LarivIndex) -> Option<RwLockWriteGuard<T>> {
-        self.traverse_get(index)
-            .and_then(|p| unsafe { &*p }.get_mut())
+        self.get_ptr(index).and_then(|p| unsafe { &*p }.get_mut())
     }
 
     #[inline]
     pub fn remove(&self, index: LarivIndex) {
-        let Some(e) = self.traverse_get(index) else { return };
+        let Some(e) = self.get_ptr(index) else { return };
         unsafe { &*e }.empty();
         self.shared
             .allocation_threshold
@@ -134,24 +149,27 @@ impl<'a, T> Lariv<'a, T> {
         self.shared
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
-        unsafe { &*self.traverse_get(index)? }.take()
+        unsafe { &*self.get_ptr(index)? }.take()
     }
 
     #[must_use]
     #[inline]
-    fn traverse_get(&self, mut li: LarivIndex) -> Option<*const AtomicOption<T>> {
-        let mut node = &self.list;
-        if li.index as usize >= node.shared.cap
-            || li.node as usize >= node.shared.nodes.load(Ordering::Acquire)
+    fn get_ptr(&self, li: LarivIndex) -> Option<*const AtomicOption<T>> {
+        if li.index as usize >= self.shared.cap
+            || li.node as usize >= self.shared.nodes.load(Ordering::Acquire)
         {
             return None;
         };
-        // traverse the node list and get the element
-        while li.node > 0 {
-            node = node.next.get()?;
-            li.node -= 1
-        }
-        Some(unsafe { node.ptr.load(Ordering::Relaxed).add(li.index as usize) })
+        Some(unsafe {
+            (*self
+                .shared
+                .buffers
+                .0
+                .load(Ordering::Acquire)
+                .add(li.node as usize))
+            .load(Ordering::Relaxed)
+            .add(li.index as usize)
+        })
     }
 
     #[inline]
@@ -247,7 +265,28 @@ impl<'a, T> LarivNode<'a, T> {
         let node_ptr = node.as_ref() as *const _ as *mut _;
         // set next
         unsafe { self.next.set(node).unwrap_unchecked() };
-
+        let cap = self.shared.buffers.1.load(Ordering::Relaxed);
+        if nth >= cap {
+            println!("a");
+            let new_buf = Vec::with_capacity(cap * 2).into_raw_parts().0;
+            let old_buf = self.shared.buffers.0.load(Ordering::Relaxed);
+            unsafe {
+                copy_nonoverlapping(old_buf, new_buf, cap);
+                new_buf.add(nth).write(AtomicPtr::new(ptr));
+                self.shared.buffers.0.store(new_buf, Ordering::Release);
+                Vec::from_raw_parts(old_buf, cap, cap);
+            }
+            self.shared.buffers.1.store(cap * 2, Ordering::Release)
+        } else {
+            unsafe {
+                self.shared
+                    .buffers
+                    .0
+                    .load(Ordering::Relaxed)
+                    .add(nth)
+                    .write(AtomicPtr::new(ptr));
+            }
+        }
         // update shared info
         self.shared.nodes.fetch_add(1, Ordering::AcqRel);
         self.shared.allocation_threshold.store(0, Ordering::Release);
@@ -258,7 +297,7 @@ impl<'a, T> LarivNode<'a, T> {
     #[inline]
     fn calculate_allocate_threshold(&self) -> isize {
         // 30% of total capacity
-        ((self.shared.nodes.load(Ordering::Acquire) * self.shared.cap) as f64 * 0.3) as isize
+        ((self.shared.nodes.load(Ordering::Relaxed) * self.shared.cap) as f64 * 0.3) as isize
     }
 }
 
@@ -297,6 +336,14 @@ impl<'a, T> Drop for Lariv<'a, T> {
                 ));
             };
             next = node.next.get();
+        }
+        unsafe {
+            let cap = self.shared.buffers.1.load(Ordering::Relaxed);
+            drop(Vec::from_raw_parts(
+                self.shared.buffers.0.load(Ordering::Relaxed),
+                cap,
+                cap,
+            ))
         }
         // it's safe but miri hates it
         #[cfg(not(miri))]
