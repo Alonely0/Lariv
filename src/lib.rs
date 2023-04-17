@@ -297,7 +297,7 @@ impl<'a, T> LarivNode<'a, T> {
     #[inline]
     fn calculate_allocate_threshold(&self) -> isize {
         // 30% of total capacity
-        ((self.shared.nodes.load(Ordering::Relaxed) * self.shared.cap) as f64 * 0.3) as isize
+        ((self.shared.nodes.load(Ordering::Acquire) * self.shared.cap) as f64 * 0.3) as isize
     }
 }
 
