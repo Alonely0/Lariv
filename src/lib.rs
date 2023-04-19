@@ -267,7 +267,6 @@ impl<'a, T> LarivNode<'a, T> {
         unsafe { self.next.set(node).unwrap_unchecked() };
         let cap = self.shared.buffers.1.load(Ordering::Relaxed);
         if nth >= cap {
-            println!("a");
             let new_buf = Vec::with_capacity(cap * 2).into_raw_parts().0;
             let old_buf = self.shared.buffers.0.load(Ordering::Relaxed);
             unsafe {
