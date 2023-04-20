@@ -10,6 +10,7 @@ repository = "https://github.com/Alonely0/Lariv"
 readme = "./README.md"
 keywords = ["vector", "atomic", "ring", "buffer", "thread-safe"]
 categories = ["concurrency", "data-structures", "database-implementations", "memory-management", "rust-patterns"]
+exclude = [".github/workflows/"]
 
 [dependencies]
 aliasable = { version = "0.1.3", features = [
