@@ -3,6 +3,8 @@
 #![feature(sync_unsafe_cell)]
 #![feature(let_chains)]
 #![feature(const_ptr_write)]
+#![cfg_attr(miri, allow(unused_imports))]
+#![doc = include_str!("../README.md")]
 
 use std::{
     cell::SyncUnsafeCell,
@@ -26,7 +28,14 @@ mod option;
 #[cfg(test)]
 mod tests;
 
-/// Linked Atomic Vector
+/// # Linked Atomic Random Insert Vector.
+///
+/// Lariv is a multithreaded data structure similar to a vector, with the exception of being able
+/// to remove any elements at any index (not just the last one) without copying the posterior elements.
+/// Lariv is lock-free, with a worst-case O(n) smart insert algorithm that tries to keep inserts at a fast
+/// constant speed. Reallocations are wait-free, and lookups (needed for getting and removing) are O(1).
+/// Even though Lariv is designed for short-lived data, it works on most multithreaded scenarios where a
+/// vector-like data structure is viable.
 pub struct Lariv<'a, T> {
     list: AliasableBox<LarivNode<'a, T>>, // linked list to buffers
     shared: &'a SharedItems<'a, T>,       // shared items across nodes
@@ -42,6 +51,8 @@ struct LarivNode<'a, T> {
     shared: &'a SharedItems<'a, T>,     // shared items across nodes
 }
 
+/// This stores both the node and the index of a element on a Lariv, and is the key for O(1)
+/// lookups and having 128 bits indexes (needed for TPR, the parent project of Lariv).
 #[derive(Copy, Clone, Debug)]
 pub struct LarivIndex {
     node: u64,
@@ -61,6 +72,9 @@ struct SharedItems<'a, T> {
 }
 
 impl<'a, T> Lariv<'a, T> {
+    /// Builds a new Lariv with a specific capacity of elements per node. For maximum speeds,
+    /// this should be quite over-budgeted, though here the performance hit of allocating a new
+    /// node is negligible compared to most data structures.
     #[must_use]
     pub fn new(buf_cap: usize) -> Self {
         // tbh idk
@@ -117,6 +131,7 @@ impl<'a, T> Lariv<'a, T> {
         unsafe { write_bytes(ptr, 0, cap) };
     }
 
+    /// Inserts a new element into the [`Lariv`] and returns its [`LarivIndex`].
     #[inline]
     pub fn push(&self, conn: T) -> LarivIndex {
         // call LarivNode::push() on the node currently on the cursor
@@ -124,16 +139,34 @@ impl<'a, T> Lariv<'a, T> {
         unsafe { &*self.shared.cursor_ptr.load(Ordering::Acquire) }.push(conn)
     }
 
+    /// Gets an immutable reference to an element via its [`LarivIndex`]. While this is held,
+    /// calls to [`get_mut`], [`remove`], and [`take`] with the same [`LarivIndex`] will block.
+    /// This function will block if there are any held references to the same element.
+    ///
+    /// [`get_mut`]: Lariv::get_mut
+    /// [`remove`]: Lariv::remove
+    /// [`take`]: Lariv::take
     #[inline]
     pub fn get(&self, index: LarivIndex) -> Option<RwLockReadGuard<T>> {
         self.get_ptr(index).and_then(|p| unsafe { &*p }.get())
     }
 
+    /// Gets a mutable reference to an element via its [`LarivIndex`]. While this is held,
+    /// calls to [`get`], [`remove`], and [`take`] with the same [`LarivIndex`] will block.
+    /// This function will block if there are any held references to the same element.
+    ///
+    /// [`get`]: Lariv::get
+    /// [`remove`]: Lariv::remove
+    /// [`take`]: Lariv::take
     #[inline]
     pub fn get_mut(&self, index: LarivIndex) -> Option<RwLockWriteGuard<T>> {
         self.get_ptr(index).and_then(|p| unsafe { &*p }.get_mut())
     }
 
+    /// Removes an element from the Lariv, this is an optimized version of [`take`]. This
+    /// function will block if there are any held references to the same element.
+    ///
+    /// [`take`]: Lariv::take
     #[inline]
     pub fn remove(&self, index: LarivIndex) {
         let Some(e) = self.get_ptr(index) else { return };
@@ -143,6 +176,11 @@ impl<'a, T> Lariv<'a, T> {
             .fetch_sub(1, Ordering::AcqRel);
     }
 
+    /// Removes an element from the Lariv and returns it. A more optimized version of this
+    /// function which does not return the removed value is [`remove`]. This function will
+    /// block if there are any held references to the same element.
+    ///
+    /// [`remove`]: Lariv::remove
     #[inline]
     pub fn take(&self, index: LarivIndex) -> Option<T> {
         self.shared
@@ -171,16 +209,26 @@ impl<'a, T> Lariv<'a, T> {
         })
     }
 
+    /// Returns the amount of elements any node can hold at most. This is the value given
+    /// to the [`new`] function.
+    ///
+    /// [`new`]: Lariv::new
     #[inline]
     pub fn node_capacity(&self) -> usize {
         self.shared.cap
     }
 
+    /// Returns the amount of nodes on the Lariv.
     #[inline]
     pub fn node_num(&self) -> usize {
         self.shared.nodes.load(Ordering::Acquire)
     }
 
+    /// Returns the amount of elements the Lariv can hold at most. This is equivalent to
+    /// [`node_capacity`] multiplied by [`node_num`].
+    ///
+    /// [`node_capacity`]: Lariv::node_capacity
+    /// [`node_num`]: Lariv::node_num
     #[inline]
     pub fn capacity(&self) -> usize {
         self.node_num() * self.node_capacity()

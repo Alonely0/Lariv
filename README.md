@@ -61,6 +61,6 @@ Very performant, as far as I am aware of. If you have a suggestion for improving
 ![Lariv](https://github.com/Alonely0/Lariv/blob/main/.github/dashmap_bench_delta.png?raw=true)
 
 
-### Conclusion
+## Conclusion
 
 Lariv is quite faster than DashMap, and has a more consistent latency. Thus, applications that require consistent latencies like e.g., games, video conferences, among others, might prefer to use it. I think Lariv is ready for production use, and it works well, but I don't deem myself responsible for crashes on production, thermonuclear war, or your soon-to-be-wife breaking up with you because you had to debug prod during your wedding; and so do DashMap's maintainers.
