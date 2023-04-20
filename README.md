@@ -2,12 +2,15 @@
 
 Lariv is a thread-safe, self-memory-managed vector with no guaranteed sequential insert. It internally uses a linked ring buffer, that unlike traditional ring buffers, is growable, and very importantly, it doesn't reallocate the whole buffer as part of the process. It has been born inside [the TPR project](https://github.com/Alonely0/tpr), and it is designed for storing client connections on TPR servers, which usually are short-lived data that have to be accessed via 128-bits integers. This is basically the DashMap for vectors.
 
+Lariv is quite similar to a traditional vector, except for being able to remove any elements at any index (not just the last one) without copying the posterior elements. Lariv is lock-free, with a worst-case O(n) smart insert algorithm that tries to keep inserts at a fast constant speed. Reallocations are wait-free, and lookups (needed for getting and removing) are O(1). Even though Lariv is designed for short-lived data, it works on most multithreaded scenarios where a vector-like data structure is viable.
+
 It is recommended to over-budget on the size by quite a lot, at least 50% of the averaged expected occupied size, and ideally 100% or 200%. This is required to keep data contention low, and avoid having threads fighting over the available spaces. Reallocations only happen when the algorithm assumes the buffer is *kind of* full, and this either happens when (a) it is full, or (b) elements aren't actually getting deleted (less than 30% since the last check) and that could and will impact performance. That is actually a bug, but I made it a feature and added fancy percentages.
 
 
 # Code Examples
 
-```rs
+```rust
+use std::thread::scope;
 use lariv::{Lariv, LarivIndex};
 
 fn example() {
@@ -43,7 +46,8 @@ Miri doesn't complain. If you encounter a bug, open an issue please.
 
 # Performance
 
-Very performant, as far as I am aware of. If you have a suggestion for improving performance; I pray you to open a PR please. It is significantly faster than DashMap (see below), but as a sidenote, Lariv is a vector and DashMap is a hashmap, so it's not an apples-to-apples comparison. Here DashMap is just the score to beat since it is a data structure which can be used in the same places as Lariv, and it is also the de facto multithreaded hashmap in Rust.
+Very performant, as far as I am aware of. If you have a suggestion for improving performance; I pray you to open a PR please. It is significantly faster than DashMap (see below), but as a side-note, Lariv is a vector and DashMap is a hashmap, so it's not an apples-to-apples comparison. Here DashMap is just the score to beat since it is a data structure which can be used in the same places as Lariv, and it is also the de facto multithreaded hashmap in Rust.
+
 
 ## Comparison with DashMap, 30000 operations per sample
 
