@@ -2,7 +2,6 @@
 #![feature(core_intrinsics)]
 #![feature(sync_unsafe_cell)]
 #![feature(let_chains)]
-#![feature(const_trait_impl)]
 #![feature(const_ptr_write)]
 
 use std::{

@@ -103,7 +103,7 @@ impl<'a, T> SetGuard<'a, T> {
     }
 }
 
-impl<T> const Default for AtomicOption<T> {
+impl<T> Default for AtomicOption<T> {
     #[inline]
     fn default() -> Self {
         Self::none()
