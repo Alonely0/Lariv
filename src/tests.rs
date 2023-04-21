@@ -29,9 +29,9 @@ pub fn interleaved_read_write() {
     scope(|s| {
         for i in 1..330 {
             s.spawn(move || buf.push(i.to_string()));
-            s.spawn(
-                move || {buf.get(LarivIndex::new(i / 10, (i - 1) % 10));}
-            );
+            s.spawn(move || {
+                buf.get(LarivIndex::new(i / 10, (i - 1) % 10));
+            });
         }
     });
 }

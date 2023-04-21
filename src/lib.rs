@@ -250,7 +250,7 @@ impl<'a, T> LarivNode<'a, T> {
                 if i > node.shared.cap {
                     index = (i - 1) % node.shared.cap;
                 } else {
-                    index = node.shared.cursor.fetch_add(1, Ordering::AcqRel); 
+                    index = node.shared.cursor.fetch_add(1, Ordering::AcqRel);
                     continue
                 }
                 if let Some(next) = node.next.get() {
