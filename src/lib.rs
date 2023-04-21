@@ -33,7 +33,7 @@ mod tests;
 /// Lariv is a multithreaded data structure similar to a vector, with the exception of being able
 /// to remove any elements at any index (not just the last one) without copying the posterior elements.
 /// Lariv is lock-free, with a worst-case O(n) smart insert algorithm that tries to keep inserts at a fast
-/// constant speed. Reallocations are wait-free, and lookups (needed for getting and removing) are O(1).
+/// constant speed. Reallocations are wait-free, and lookups (needed for getting and removing) are O(n/cap).
 /// Even though Lariv is designed for short-lived data, it works on most multithreaded scenarios where a
 /// vector-like data structure is viable.
 pub struct Lariv<'a, T> {
@@ -51,8 +51,7 @@ struct LarivNode<'a, T> {
     shared: &'a SharedItems<'a, T>,     // shared items across nodes
 }
 
-/// This stores both the node and the index of a element on a Lariv, and is the key for O(1)
-/// lookups and having 128 bits indexes (needed for TPR, the parent project of Lariv).
+/// This stores both the node and the index of an element on a Lariv instance.
 #[derive(Copy, Clone, Debug)]
 pub struct LarivIndex {
     node: u64,
