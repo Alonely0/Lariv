@@ -9,9 +9,9 @@
 use std::{
     cell::SyncUnsafeCell,
     fmt::Debug,
-    intrinsics::{likely, unlikely},
+    intrinsics::likely,
     mem::{transmute, MaybeUninit},
-    ptr::{copy_nonoverlapping, write_bytes, NonNull},
+    ptr::{write_bytes, NonNull},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
         RwLockReadGuard, RwLockWriteGuard,
@@ -68,7 +68,6 @@ struct SharedItems<'a, T> {
     cap: usize,                                              // capacity (max elements)
     allocation_threshold: AtomicIsize, // set to 30% of the capacity after reaching the end
     nodes: AtomicUsize,                // nodes allocated. Used for calculating capacity
-    buffers: (AtomicPtr<AtomicPtr<AtomicOption<T>>>, AtomicUsize),
 }
 
 impl<'a, T> Lariv<'a, T> {
@@ -93,14 +92,6 @@ impl<'a, T> Lariv<'a, T> {
             cap,
             allocation_threshold: AtomicIsize::new(0),
             nodes: AtomicUsize::new(1),
-            buffers: (
-                AtomicPtr::new(
-                    Vec::<AtomicPtr<AtomicOption<T>>>::with_capacity(16)
-                        .into_raw_parts()
-                        .0,
-                ),
-                AtomicUsize::new(16),
-            ),
         }));
 
         // create head and set the shared pointer
@@ -111,11 +102,6 @@ impl<'a, T> Lariv<'a, T> {
         );
         unsafe {
             (*shared_items.head.get()).write(&*(head.as_ref() as *const _));
-            shared_items
-                .buffers
-                .0
-                .load(Ordering::Relaxed)
-                .write(AtomicPtr::new(head.ptr.load(Ordering::Relaxed)))
         };
 
         // return
@@ -191,22 +177,18 @@ impl<'a, T> Lariv<'a, T> {
 
     #[must_use]
     #[inline]
-    fn get_ptr(&self, li: LarivIndex) -> Option<*const AtomicOption<T>> {
+    fn get_ptr(&self, mut li: LarivIndex) -> Option<*const AtomicOption<T>> {
         if li.index as usize >= self.shared.cap
             || li.node as usize >= self.shared.nodes.load(Ordering::Acquire)
         {
             return None;
         };
-        Some(unsafe {
-            (*self
-                .shared
-                .buffers
-                .0
-                .load(Ordering::Acquire)
-                .add(li.node as usize))
-            .load(Ordering::Relaxed)
-            .add(li.index as usize)
-        })
+        let mut node = &self.list;
+        while li.node > 0 {
+            node = node.next.get()?;
+            li.node -= 1
+        }
+        Some(unsafe { node.ptr.load(Ordering::Relaxed).add(li.index as usize) })
     }
 
     /// Returns the amount of elements any node can hold at most. This is the value given
@@ -264,34 +246,34 @@ impl<'a, T> LarivNode<'a, T> {
                 break LarivIndex::new(node.nth, index)
             } else {
                 // ask for the next index, checking if it's the last one in the buffer
-                index = node.shared.cursor.fetch_update(Ordering::AcqRel, Ordering::Acquire, |i| {
-                    if i > node.shared.cap {
-                        Some((i - 1) % node.shared.cap)
-                    } else {
-                        Some(i + 1)
-                    }
-                }).unwrap_or_else(|i| i);
                 node = unsafe { &*node.shared.cursor_ptr.load(Ordering::Acquire) };
-                if unlikely(index == 0) {
-                    if let Some(next) = node.next.get() {
-                        // traverse to the next node
-                        node.shared.cursor_ptr.store(
-                            unsafe { *(next as *const AliasableBox<LarivNode<'a, T>>).cast() },
-                             Ordering::Release
-                        );
-                        node.shared.cursor.store(0, Ordering::Release);
-                    } else if node.shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
-                        node.shared.allocation_threshold.store(
-                            node.calculate_allocate_threshold(),
-                            Ordering::Release
-                        );
-                        node.shared.cursor_ptr.store(unsafe {
-                            (*node.shared.head.get()).assume_init() as *const LarivNode<'a, T>
-                        }.cast_mut(), Ordering::Release);
-                        node.shared.cursor.store(0, Ordering::Release);
-                    } else if likely(!node.allocated.fetch_or(true, Ordering::Acquire)) {
-                        break node.extend(element)
-                    }
+                let i = node.shared.cursor.load(Ordering::Acquire);
+                if i > node.shared.cap {
+                    index = (i - 1) % node.shared.cap;
+                } else {
+                    index = node.shared.cursor.fetch_add(1, Ordering::AcqRel); 
+                    continue
+                }
+                if let Some(next) = node.next.get() {
+                    // traverse to the next node
+                    node.shared.cursor_ptr.store(
+                        unsafe { *(next as *const AliasableBox<LarivNode<'a, T>>).cast() },
+                         Ordering::Release
+                    );
+                    node.shared.cursor.store(1, Ordering::Release);
+                    index = 0;
+                } else if node.shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
+                    node.shared.allocation_threshold.store(
+                        node.calculate_allocate_threshold(),
+                        Ordering::Release
+                    );
+                    node.shared.cursor_ptr.store(unsafe {
+                        (*node.shared.head.get()).assume_init() as *const LarivNode<'a, T>
+                    }.cast_mut(), Ordering::Release);
+                    node.shared.cursor.store(1, Ordering::Release);
+                    index = 0;
+                } else if likely(!node.allocated.fetch_or(true, Ordering::Acquire)) {
+                    break node.extend(element)
                 }
             };
         }
@@ -312,27 +294,6 @@ impl<'a, T> LarivNode<'a, T> {
         let node_ptr = node.as_ref() as *const _ as *mut _;
         // set next
         unsafe { self.next.set(node).unwrap_unchecked() };
-        let cap = self.shared.buffers.1.load(Ordering::Relaxed);
-        if nth >= cap {
-            let new_buf = Vec::with_capacity(cap * 2).into_raw_parts().0;
-            let old_buf = self.shared.buffers.0.load(Ordering::Relaxed);
-            unsafe {
-                copy_nonoverlapping(old_buf, new_buf, cap);
-                new_buf.add(nth).write(AtomicPtr::new(ptr));
-                self.shared.buffers.0.store(new_buf, Ordering::Release);
-                Vec::from_raw_parts(old_buf, cap, cap);
-            }
-            self.shared.buffers.1.store(cap * 2, Ordering::Release)
-        } else {
-            unsafe {
-                self.shared
-                    .buffers
-                    .0
-                    .load(Ordering::Relaxed)
-                    .add(nth)
-                    .write(AtomicPtr::new(ptr));
-            }
-        }
         // update shared info
         self.shared.nodes.fetch_add(1, Ordering::AcqRel);
         self.shared.allocation_threshold.store(0, Ordering::Release);
@@ -382,14 +343,6 @@ impl<'a, T> Drop for Lariv<'a, T> {
                 ));
             };
             next = node.next.get();
-        }
-        unsafe {
-            let cap = self.shared.buffers.1.load(Ordering::Relaxed);
-            drop(Vec::from_raw_parts(
-                self.shared.buffers.0.load(Ordering::Relaxed),
-                cap,
-                cap,
-            ))
         }
         // it's safe but miri hates it
         #[cfg(not(miri))]

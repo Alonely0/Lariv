@@ -8,7 +8,7 @@ pub fn general() {
     let buf = &lariv;
     scope(|s| {
         for i in 1..=100 {
-            let li = LarivIndex::new(i / 10, i - 1);
+            let li = LarivIndex::new(i / 10, (i - 1) % 10);
             s.spawn(move || buf.push(i));
             s.spawn(move || {
                 buf.get(li);
@@ -18,6 +18,20 @@ pub fn general() {
             });
             s.spawn(move || buf.take(li));
             s.spawn(move || buf.remove(li));
+        }
+    });
+}
+
+#[test]
+pub fn interleaved_read_write() {
+    let lariv = Lariv::new(10);
+    let buf = &lariv;
+    scope(|s| {
+        for i in 1..330 {
+            s.spawn(move || buf.push(i.to_string()));
+            s.spawn(
+                move || {buf.get(LarivIndex::new(i / 10, (i - 1) % 10));}
+            );
         }
     });
 }
