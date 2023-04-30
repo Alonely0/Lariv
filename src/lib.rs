@@ -260,16 +260,17 @@ impl<'a, T> LarivNode<'a, T> {
                          Ordering::Release
                     );
                     node.shared.cursor.store(1, Ordering::Release);
+                    node = next;
                     index = 0;
                 } else if node.shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
                     node.shared.allocation_threshold.store(
                         node.calculate_allocate_threshold(),
                         Ordering::Release
                     );
-                    node.shared.cursor_ptr.store(unsafe {
-                        (*node.shared.head.get()).assume_init() as *const LarivNode<'a, T>
-                    }.cast_mut(), Ordering::Release);
+                    let head = unsafe{ (*node.shared.head.get()).assume_init() as *const LarivNode<'a, T> };
+                    node.shared.cursor_ptr.store(head.cast_mut(), Ordering::Release);
                     node.shared.cursor.store(1, Ordering::Release);
+                    node = unsafe { &*head };
                     index = 0;
                 } else if likely(!node.allocated.fetch_or(true, Ordering::Acquire)) {
                     break node.extend(element)
