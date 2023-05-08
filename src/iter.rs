@@ -5,7 +5,7 @@ use std::{
     sync::{atomic::Ordering, RwLockReadGuard, RwLockWriteGuard},
 };
 
-use crate::{Lariv, LarivNode, SharedItems, Epoch};
+use crate::{Epoch, Lariv, LarivNode, SharedItems};
 
 impl<'a, 'b, T, E: Epoch> Lariv<'a, T, E> {
     pub fn iter(&'b self) -> Iter<'a, 'b, T, E> {

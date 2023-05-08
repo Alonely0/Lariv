@@ -21,14 +21,14 @@ use std::{
 };
 
 use aliasable::prelude::*;
-use epoch::{Epoch, NoEpoch, LarivEpoch};
+use epoch::{Epoch, LarivEpoch, NoEpoch};
 use once_cell::sync::OnceCell;
 
 use option::AtomicOption;
 
+mod epoch;
 mod iter;
 mod option;
-mod epoch;
 
 /// # Linked Atomic Random Insert Vector.
 ///
@@ -38,16 +38,16 @@ mod epoch;
 /// constant speed. Reallocations are wait-free, and lookups (needed for getting and removing) are O(n/cap).
 /// Even though Lariv is designed for short-lived data, it works on most multithreaded scenarios where a
 /// vector-like data structure is viable.
-/// 
+///
 /// Lariv has two modes, with and without epochs. The default, without, is the most performant one, but will
 /// disable the `*_with_epoch` functions, which check that the element you access and/or delete is the same
 /// that the one that was inserted when the [`LarivIndex`] was returned by the [`push`] function. For changing
 /// between modes, see the [`new`] and [`new_with_epoch`] functions.
-/// 
+///
 /// [`push`]: Lariv::push
 /// [`new`]: Lariv::new
 /// [`new_with_epoch`]: Lariv::new_with_epoch
- pub struct Lariv<'a, T, E: Epoch = NoEpoch> {
+pub struct Lariv<'a, T, E: Epoch = NoEpoch> {
     list: AliasableBox<LarivNode<'a, T, E>>, // linked list to buffers
     shared: &'a SharedItems<'a, T, E>,       // shared items across nodes
 }
@@ -345,7 +345,11 @@ impl<'a, T, E: Epoch> LarivNode<'a, T, E> {
             .allocation_threshold
             .store(self.calculate_allocate_threshold(), Ordering::Release);
         self.shared.cursor_ptr.store(node_ptr, Ordering::Release);
-        LarivIndex { node: nth as u64, index: 0, epoch: E::new(0) }
+        LarivIndex {
+            node: nth as u64,
+            index: 0,
+            epoch: E::new(0),
+        }
     }
 
     #[inline]

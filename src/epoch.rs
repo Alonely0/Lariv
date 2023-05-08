@@ -1,4 +1,4 @@
-use std::sync::{RwLockReadGuard, RwLockWriteGuard, atomic::Ordering};
+use std::sync::{atomic::Ordering, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{Lariv, LarivIndex};
 
