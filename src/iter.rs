@@ -5,10 +5,10 @@ use std::{
     sync::{atomic::Ordering, RwLockReadGuard, RwLockWriteGuard},
 };
 
-use crate::{Lariv, LarivNode, SharedItems};
+use crate::{Epoch, Lariv, LarivNode, SharedItems};
 
-impl<'a, 'b, T> Lariv<'a, T> {
-    pub fn iter(&'b self) -> Iter<'a, 'b, T> {
+impl<'a, 'b, T, E: Epoch> Lariv<'a, T, E> {
+    pub fn iter(&'b self) -> Iter<'a, 'b, T, E> {
         Iter {
             buf: self,
             current_node: unsafe {
@@ -17,7 +17,7 @@ impl<'a, 'b, T> Lariv<'a, T> {
             next_index: 0,
         }
     }
-    pub fn iter_mut(&'b self) -> IterMut<'a, 'b, T> {
+    pub fn iter_mut(&'b self) -> IterMut<'a, 'b, T, E> {
         IterMut {
             current_node: unsafe {
                 NonNull::new_unchecked(self.list.as_ref() as *const _ as *mut _)
@@ -28,21 +28,21 @@ impl<'a, 'b, T> Lariv<'a, T> {
     }
 }
 
-pub struct IntoIter<'a, T> {
-    buf: ManuallyDrop<Lariv<'a, T>>,
-    current_node: NonNull<LarivNode<'a, T>>,
+pub struct IntoIter<'a, T, E: Epoch> {
+    buf: ManuallyDrop<Lariv<'a, T, E>>,
+    current_node: NonNull<LarivNode<'a, T, E>>,
     next_index: usize,
 }
 
-pub struct Iter<'a, 'b, T> {
-    buf: &'b Lariv<'a, T>,
-    current_node: NonNull<LarivNode<'a, T>>,
+pub struct Iter<'a, 'b, T, E: Epoch> {
+    buf: &'b Lariv<'a, T, E>,
+    current_node: NonNull<LarivNode<'a, T, E>>,
     next_index: usize,
 }
 
-pub struct IterMut<'a, 'b, T> {
-    buf: &'b Lariv<'a, T>,
-    current_node: NonNull<LarivNode<'a, T>>,
+pub struct IterMut<'a, 'b, T, E: Epoch> {
+    buf: &'b Lariv<'a, T, E>,
+    current_node: NonNull<LarivNode<'a, T, E>>,
     next_index: usize,
 }
 
@@ -71,9 +71,9 @@ macro_rules! iter {
     }};
 }
 
-impl<'a, T> IntoIterator for Lariv<'a, T> {
+impl<'a, T, E: Epoch> IntoIterator for Lariv<'a, T, E> {
     type Item = T;
-    type IntoIter = IntoIter<'a, T>;
+    type IntoIter = IntoIter<'a, T, E>;
 
     fn into_iter(self) -> Self::IntoIter {
         IntoIter {
@@ -86,7 +86,7 @@ impl<'a, T> IntoIterator for Lariv<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for IntoIter<'a, T> {
+impl<'a, T, E: Epoch> Iterator for IntoIter<'a, T, E> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -94,7 +94,7 @@ impl<'a, T> Iterator for IntoIter<'a, T> {
     }
 }
 
-impl<'a, 'b, T> Iterator for Iter<'a, 'b, T> {
+impl<'a, 'b, T, E: Epoch> Iterator for Iter<'a, 'b, T, E> {
     type Item = RwLockReadGuard<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -102,7 +102,7 @@ impl<'a, 'b, T> Iterator for Iter<'a, 'b, T> {
     }
 }
 
-impl<'a, 'b, T> Iterator for IterMut<'a, 'b, T> {
+impl<'a, 'b, T, E: Epoch> Iterator for IterMut<'a, 'b, T, E> {
     type Item = RwLockWriteGuard<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -110,14 +110,14 @@ impl<'a, 'b, T> Iterator for IterMut<'a, 'b, T> {
     }
 }
 
-impl<'a, T> Drop for IntoIter<'a, T> {
+impl<'a, T, E: Epoch> Drop for IntoIter<'a, T, E> {
     fn drop(&mut self) {
         // it's safe but miri hates it
         #[cfg(not(miri))]
         unsafe {
             drop((
-                Box::from_raw(self.buf.shared as *const _ as *mut SharedItems<'a, T>),
-                Box::from_raw(self.buf.list.as_ref() as *const _ as *mut LarivNode<'a, T>),
+                Box::from_raw(self.buf.shared as *const _ as *mut SharedItems<'a, T, E>),
+                Box::from_raw(self.buf.list.as_ref() as *const _ as *mut LarivNode<'a, T, E>),
             ));
         }
     }
