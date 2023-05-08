@@ -296,7 +296,9 @@ impl<'a, T> LarivNode<'a, T> {
         unsafe { self.next.set(node).unwrap_unchecked() };
         // update shared info
         self.shared.nodes.fetch_add(1, Ordering::AcqRel);
-        self.shared.allocation_threshold.store(self.calculate_allocate_threshold(), Ordering::Release);
+        self.shared
+            .allocation_threshold
+            .store(self.calculate_allocate_threshold(), Ordering::Release);
         self.shared.cursor_ptr.store(node_ptr, Ordering::Release);
         LarivIndex::new(nth, 0)
     }
