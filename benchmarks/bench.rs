@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dashmap::DashMap;
 use lariv::{Lariv, LarivIndex};
-use std::{thread::scope, mem::ManuallyDrop};
+use std::{mem::ManuallyDrop, thread::scope};
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("lariv", |b| b.iter(bench));
