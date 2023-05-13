@@ -22,12 +22,13 @@ use std::{
 
 use aliasable::prelude::*;
 use epoch::{Epoch, LarivEpoch, NoEpoch};
-use once_cell::sync::OnceCell;
 
+use once_cell::OnceAliasableBox;
 use option::AtomicOption;
 
 mod epoch;
 mod iter;
+mod once_cell;
 mod option;
 
 /// # Linked Atomic Random Insert Vector.
@@ -56,7 +57,7 @@ pub struct Lariv<'a, T, E: Epoch = NoEpoch> {
 #[derive(Debug)]
 struct LarivNode<'a, T, E: Epoch> {
     ptr: AtomicPtr<AtomicOption<T, E>>, // buffer start
-    next: OnceCell<AliasableBox<Self>>, // linked list, next node (buffer extension)
+    next: OnceAliasableBox<Self>,       // linked list, next node (buffer extension)
     allocated: AtomicBool,              // set when the node has allocated.
     nth: usize,                         // number of buffer (used for global index)
     shared: &'a SharedItems<'a, T, E>,  // shared items across nodes
@@ -227,7 +228,7 @@ impl<'a, T, E: Epoch> Lariv<'a, T, E> {
         {
             return None;
         };
-        let mut node = &self.list;
+        let mut node = self.list.as_ref();
         while li.node > 0 {
             node = node.next.get()?;
             li.node -= 1
@@ -269,7 +270,7 @@ impl<'a, T, E: Epoch> LarivNode<'a, T, E> {
     ) -> AliasableBox<Self> {
         AliasableBox::from_unique(UniqueBox::new(Self {
             ptr: AtomicPtr::new(ptr),
-            next: OnceCell::new(),
+            next: OnceAliasableBox::new(),
             allocated: AtomicBool::new(false),
             nth,
             shared: shared_items,
@@ -301,7 +302,7 @@ impl<'a, T, E: Epoch> LarivNode<'a, T, E> {
                 if let Some(next) = node.next.get() {
                     // traverse to the next node
                     node.shared.cursor_ptr.store(
-                        unsafe { *(next as *const AliasableBox<LarivNode<'a, T, E>>).cast() },
+                        next as *const _ as *mut _,
                          Ordering::Release
                     );
                     node.shared.cursor.store(1, Ordering::Release);
@@ -338,7 +339,7 @@ impl<'a, T, E: Epoch> LarivNode<'a, T, E> {
         let node = Self::new(ptr, nth, self.shared);
         let node_ptr = node.as_ref() as *const _ as *mut _;
         // set next
-        unsafe { self.next.set(node).unwrap_unchecked() };
+        unsafe { self.next.set_unchecked(node) };
         // update shared info
         self.shared.nodes.fetch_add(1, Ordering::AcqRel);
         self.shared
@@ -381,7 +382,7 @@ where
 
 impl<'a, T, E: Epoch> Drop for Lariv<'a, T, E> {
     fn drop(&mut self) {
-        let mut next = Some(&self.list);
+        let mut next = Some(self.list.as_ref());
         while let Some(node) = next {
             unsafe {
                 // the vec handles the drop, which should be
