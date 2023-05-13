@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dashmap::DashMap;
 use lariv::{Lariv, LarivIndex};
-use std::thread::scope;
+use std::{thread::scope, mem::ManuallyDrop};
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("lariv", |b| b.iter(bench));
@@ -12,7 +12,7 @@ criterion_group!(benches, criterion_benchmark);
 criterion_main!(benches);
 
 fn bench() {
-    let buffer = black_box(Lariv::new(black_box(8000)));
+    let buffer = black_box(ManuallyDrop::new(Lariv::new(black_box(8000))));
     let buf = &buffer;
     scope(|s| {
         for i in 1..=10000 {
@@ -27,7 +27,7 @@ fn bench() {
 }
 
 fn bench2() {
-    let buffer = black_box(DashMap::new());
+    let buffer = black_box(ManuallyDrop::new(DashMap::new()));
     let buf = &buffer;
     scope(|s| {
         for i in 1..10000 {
