@@ -50,7 +50,7 @@ impl const Epoch for NoEpoch {
     fn update(&mut self) {}
 }
 
-impl<'a, T> Lariv<'a, T, LarivEpoch> {
+impl<T> Lariv<T, LarivEpoch> {
     /// Gets an immutable reference to an element via its [`LarivIndex`]. While this is held,
     /// calls to [`get_mut`], [`remove`], and [`take`] with the same [`LarivIndex`] will block.
     /// This function will block if there are any held references to the same element. This
@@ -95,7 +95,7 @@ impl<'a, T> Lariv<'a, T, LarivEpoch> {
     pub fn remove_with_epoch(&self, index: LarivIndex<LarivEpoch>) {
         let Some(e) = self.get_ptr(index) else { return };
         unsafe { &*e }.empty_with_epoch(index.epoch.0);
-        self.shared
+        unsafe { &*self.shared.load(Ordering::Relaxed) }
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
     }
@@ -110,7 +110,7 @@ impl<'a, T> Lariv<'a, T, LarivEpoch> {
     /// [`new_with_epoch`]: Lariv::new_with_epoch
     #[inline]
     pub fn take_with_epoch(&self, index: LarivIndex<LarivEpoch>) -> Option<T> {
-        self.shared
+        unsafe { &*self.shared.load(Ordering::Relaxed) }
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
         unsafe { &*self.get_ptr(index)? }.take_with_epoch(index.epoch.0)
