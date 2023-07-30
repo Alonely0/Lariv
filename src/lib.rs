@@ -3,8 +3,6 @@
 #![feature(sync_unsafe_cell)]
 #![feature(let_chains)]
 #![feature(const_ptr_write)]
-#![feature(const_trait_impl)]
-#![feature(const_mut_refs)]
 #![cfg_attr(miri, allow(unused_imports))]
 #![doc = include_str!("../README.md")]
 

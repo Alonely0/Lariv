@@ -26,9 +26,9 @@ pub struct SetGuard<'a, T> {
 }
 
 #[allow(dead_code)]
-impl<T, E: ~const Epoch> AtomicOption<T, E> {
-    #[inline]
-    pub const fn some(x: T) -> Self {
+impl<T, E: Epoch> AtomicOption<T, E> {
+    #[inline(always)]
+    pub fn some(x: T) -> Self {
         Self {
             tag: AtomicBool::new(true),
             value: RwLock::new(MaybeUninit::new(x)),
@@ -36,8 +36,8 @@ impl<T, E: ~const Epoch> AtomicOption<T, E> {
         }
     }
 
-    #[inline]
-    pub const fn none() -> Self {
+    #[inline(always)]
+    pub fn none() -> Self {
         Self {
             tag: AtomicBool::new(false),
             value: RwLock::new(MaybeUninit::uninit()),

@@ -2,7 +2,6 @@ use std::sync::{atomic::Ordering, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{Lariv, LarivIndex};
 
-#[const_trait]
 pub trait Epoch: Copy {
     fn new(e: u64) -> Self;
     fn check(&self, e: u64) -> bool;
@@ -18,8 +17,8 @@ pub struct NoEpoch;
 #[derive(Copy, Clone, Debug)]
 pub struct LarivEpoch(pub u64);
 
-impl const Epoch for LarivEpoch {
-    #[inline]
+impl Epoch for LarivEpoch {
+    #[inline(always)]
     fn new(e: u64) -> Self {
         Self(e)
     }
@@ -29,14 +28,14 @@ impl const Epoch for LarivEpoch {
         self.0 == e
     }
 
-    #[inline]
+    #[inline(always)]
     fn update(&mut self) {
         self.0 += 1
     }
 }
 
-impl const Epoch for NoEpoch {
-    #[inline]
+impl Epoch for NoEpoch {
+    #[inline(always)]
     fn new(_e: u64) -> Self {
         Self
     }
