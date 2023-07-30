@@ -2,7 +2,7 @@ use std::{
     intrinsics::unlikely,
     mem::ManuallyDrop,
     ptr::NonNull,
-    sync::{atomic::Ordering, RwLockReadGuard, RwLockWriteGuard},
+    sync::{RwLockReadGuard, RwLockWriteGuard},
 };
 
 use crate::{Epoch, Lariv, LarivNode, SharedItems};
@@ -61,7 +61,7 @@ macro_rules! iter {
             ret = unsafe {
                 &*(*$x.current_node.as_ptr())
                     .ptr
-                    .load(Ordering::Relaxed)
+                    .as_ptr()
                     .add($x.next_index)
             }
             .$y();
@@ -116,7 +116,7 @@ impl<T, E: Epoch> Drop for IntoIter<T, E> {
         #[cfg(not(miri))]
         unsafe {
             drop((
-                Box::from_raw(self.buf.shared.load(Ordering::Relaxed) as *const _ as *mut SharedItems<T, E>),
+                Box::from_raw(self.buf.shared.as_ptr() as *const _ as *mut SharedItems<T, E>),
                 Box::from_raw(self.buf.list.as_ref() as *const _ as *mut LarivNode<T, E>),
             ));
         }

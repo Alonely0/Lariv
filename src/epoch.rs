@@ -94,7 +94,7 @@ impl<T> Lariv<T, LarivEpoch> {
     pub fn remove_with_epoch(&self, index: LarivIndex<LarivEpoch>) {
         let Some(e) = self.get_ptr(index) else { return };
         unsafe { &*e }.empty_with_epoch(index.epoch.0);
-        unsafe { &*self.shared.load(Ordering::Relaxed) }
+        unsafe { self.shared.as_ref() }
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
     }
@@ -109,7 +109,7 @@ impl<T> Lariv<T, LarivEpoch> {
     /// [`new_with_epoch`]: Lariv::new_with_epoch
     #[inline]
     pub fn take_with_epoch(&self, index: LarivIndex<LarivEpoch>) -> Option<T> {
-        unsafe { &*self.shared.load(Ordering::Relaxed) }
+        unsafe { self.shared.as_ref() }
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
         unsafe { &*self.get_ptr(index)? }.take_with_epoch(index.epoch.0)
