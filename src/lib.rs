@@ -350,6 +350,7 @@ impl<T, E: Epoch> LarivNode<T, E> {
             .allocation_threshold
             .store(self.calculate_allocate_threshold(), Ordering::Release);
         shared.cursor_ptr.store(node_ptr, Ordering::Release);
+        shared.cursor.store(1, Ordering::Release);
         LarivIndex {
             node: nth as u64,
             index: 0,
