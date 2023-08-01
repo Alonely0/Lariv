@@ -43,7 +43,7 @@ impl<T> Drop for OnceAliasableBox<T> {
         if !ptr.is_null() {
             // safe but miri hates it.
             #[cfg(not(miri))]
-            drop(unsafe { transmute::<*mut T, AliasableBox<T>>(ptr) })
+            drop(unsafe { transmute::<*mut T, AliasableBox<T>>(ptr) });
         }
     }
 }

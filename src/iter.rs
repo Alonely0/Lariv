@@ -5,7 +5,10 @@ use std::{
     sync::{RwLockReadGuard, RwLockWriteGuard},
 };
 
-use crate::{Epoch, Lariv, LarivNode, SharedItems};
+use crate::{
+    option::{AtomicElement, AtomicOptionTag, Guard},
+    Epoch, Lariv, LarivNode, SharedItems,
+};
 
 impl<'a, T, E: Epoch> Lariv<T, E> {
     pub fn iter(&'a self) -> Iter<'a, T, E> {
@@ -59,12 +62,15 @@ macro_rules! iter {
                 $x.next_index = 0;
             }
             ret = unsafe {
-                &*(*$x.current_node.as_ptr())
-                    .ptr
-                    .as_ptr()
-                    .add($x.next_index)
-            }
-            .$y();
+                let ptr = (*$x.current_node.as_ptr()).ptr.as_ptr();
+                AtomicOptionTag::$y(
+                    &*ptr.add($x.next_index),
+                    NonNull::new_unchecked(ptr
+                        .byte_add($x.buf.shared.as_ref().pad)
+                        .cast::<AtomicElement<T>>()
+                        .add($x.next_index)),
+                )
+            };
             $x.next_index += 1;
         }
         ret
@@ -95,7 +101,7 @@ impl<T, E: Epoch> Iterator for IntoIter<T, E> {
 }
 
 impl<'a, T, E: Epoch> Iterator for Iter<'a, T, E> {
-    type Item = RwLockReadGuard<'a, T>;
+    type Item = Guard<T, RwLockReadGuard<'a, E>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         iter!(self, get)
@@ -103,7 +109,7 @@ impl<'a, T, E: Epoch> Iterator for Iter<'a, T, E> {
 }
 
 impl<'a, T, E: Epoch> Iterator for IterMut<'a, T, E> {
-    type Item = RwLockWriteGuard<'a, T>;
+    type Item = Guard<T, RwLockWriteGuard<'a, E>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         iter!(self, get_mut)

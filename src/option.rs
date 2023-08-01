@@ -1,38 +1,45 @@
 use std::{
-    cell::SyncUnsafeCell,
-    fmt::Debug,
-    mem::{replace, transmute, MaybeUninit},
+    fmt::{self, Debug},
+    mem::MaybeUninit,
+    ops::{Deref, DerefMut},
+    ptr::{drop_in_place, replace, NonNull},
     sync::{
         atomic::{AtomicBool, Ordering},
         RwLock, RwLockReadGuard, RwLockWriteGuard,
     },
 };
 
-use crate::{Epoch, LarivEpoch};
+use crate::{epoch::LarivEpoch, Epoch};
+
+pub(crate) type AtomicElement<T> = MaybeUninit<T>;
 
 /// Option with an atomic tag and interior synchronization.
-pub struct AtomicOption<T, E: Epoch> {
+pub struct AtomicOptionTag<E: Epoch> {
     tag: AtomicBool,
-    value: RwLock<MaybeUninit<T>>,
-    epoch: SyncUnsafeCell<E>,
+    epoch: RwLock<E>,
 }
 
 /// Sets the tag to true after drop. Grabs a reference
 /// to ensure the [`AtomicOption`] is not dropped.
-pub struct SetGuard<'a, T> {
-    guard: RwLockWriteGuard<'a, MaybeUninit<T>>,
+pub struct SetGuard<'a, E: Epoch> {
+    pub guard: RwLockWriteGuard<'a, E>,
     tag: &'a AtomicBool,
     written: bool,
 }
 
+pub struct Guard<T, G> {
+    value: NonNull<T>,
+    #[allow(dead_code)]
+    guard: G,
+}
+
 #[allow(dead_code)]
-impl<T, E: Epoch> AtomicOption<T, E> {
+impl<E: Epoch> AtomicOptionTag<E> {
     #[inline(always)]
-    pub fn some(x: T) -> Self {
+    pub fn some() -> Self {
         Self {
             tag: AtomicBool::new(true),
-            value: RwLock::new(MaybeUninit::new(x)),
-            epoch: SyncUnsafeCell::new(E::new(0)),
+            epoch: RwLock::new(E::new(0)),
         }
     }
 
@@ -40,155 +47,169 @@ impl<T, E: Epoch> AtomicOption<T, E> {
     pub fn none() -> Self {
         Self {
             tag: AtomicBool::new(false),
-            value: RwLock::new(MaybeUninit::uninit()),
-            epoch: SyncUnsafeCell::new(E::new(0)),
+            epoch: RwLock::new(E::new(0)),
         }
     }
 
     #[inline]
-    pub fn try_set(&self) -> Option<(SetGuard<'_, T>, E)> {
-        if let Ok(guard) = self.value.try_write() && !self.tag.load(Ordering::Acquire) {
-            Some((SetGuard{guard, tag: &self.tag, written: false}, unsafe { *self.epoch.get() }))
+    pub fn try_set(&self) -> Option<SetGuard<'_, E>> {
+        if let Ok(guard) = self.epoch.try_write() && !self.tag.load(Ordering::Acquire) {
+            Some(SetGuard{guard, tag: &self.tag, written: false})
+        } else {
+            None
+        }
+    }
+    pub fn get<T>(
+        &'_ self,
+        value: NonNull<AtomicElement<T>>,
+    ) -> Option<Guard<T, RwLockReadGuard<'_, E>>> {
+        if let Ok(e) = self.epoch.read() && self.tag.load(Ordering::Acquire) {
+            Some(Guard { value: value.cast(), guard: e })
         } else {
             None
         }
     }
 
     #[inline]
-    pub fn get(&self) -> Option<RwLockReadGuard<T>> {
-        if let Ok(v) = self.value.read() && self.tag.load(Ordering::Acquire) {
-            unsafe {
-                Some(transmute::<RwLockReadGuard<MaybeUninit<T>>, RwLockReadGuard<T>>(
-                    v,
-                ))
-            }
+    pub fn get_mut<T>(
+        &self,
+        value: NonNull<AtomicElement<T>>,
+    ) -> Option<Guard<T, RwLockWriteGuard<'_, E>>> {
+        if let Ok(e) = self.epoch.write() && self.tag.load(Ordering::Acquire) {
+            Some(Guard { value: value.cast(), guard: e })
         } else {
             None
         }
     }
 
     #[inline]
-    pub fn get_mut(&self) -> Option<RwLockWriteGuard<T>> {
-        if let Ok(v) = self.value.write() && self.tag.load(Ordering::Acquire) {
-            unsafe {
-                Some(transmute::<RwLockWriteGuard<MaybeUninit<T>>, RwLockWriteGuard<T>>(
-                    v,
-                ))
-            }
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub fn take(&self) -> Option<T> {
-        if let Ok(mut guard) = self.value.write() && self.tag.load(Ordering::Acquire) {
+    pub fn take<T>(&self, value: NonNull<AtomicElement<T>>) -> Option<T> {
+        if let Ok(guard) = self.epoch.write() && self.tag.load(Ordering::Acquire) {
             self.tag.store(false, Ordering::Release);
-            unsafe { &mut *self.epoch.get() }.update();
-            Some(unsafe { replace(&mut *guard, MaybeUninit::<T>::uninit()).assume_init() })
+            let e = unsafe { replace(value.as_ptr(), MaybeUninit::<T>::uninit()).assume_init() };
+            drop(guard);
+            Some(e)
         } else {
             None
         }
     }
 
     #[inline]
-    pub fn empty(&self) {
+    pub fn empty<T>(&self, value: NonNull<AtomicElement<T>>) {
         // Wait for the guard to get dropped
-        let mut lock = unsafe { self.value.write().unwrap_unchecked() };
+        let lock = unsafe { self.epoch.write().unwrap_unchecked() };
         // set tag to false, drop the inner if it was already written
         if self.tag.fetch_and(false, Ordering::AcqRel) {
-            unsafe { lock.assume_init_drop() }
+            unsafe { drop_in_place(value.as_ptr().cast::<T>()) }
         }
-        unsafe { &mut *self.epoch.get() }.update()
+        drop(lock);
     }
 }
 
-impl<T> AtomicOption<T, LarivEpoch> {
-    #[inline]
-    pub fn get_with_epoch(&self, epoch: u64) -> Option<RwLockReadGuard<T>> {
-        if let Ok(v) = self.value.read() && self.tag.load(Ordering::Acquire) && unsafe { &*self.epoch.get() }.check(epoch) {
-            unsafe {
-                Some(transmute::<RwLockReadGuard<MaybeUninit<T>>, RwLockReadGuard<T>>(
-                    v,
-                ))
-            }
+impl AtomicOptionTag<LarivEpoch> {
+    pub fn get_with_epoch<T>(
+        &self,
+        value: NonNull<AtomicElement<T>>,
+        epoch: u64,
+    ) -> Option<Guard<T, RwLockReadGuard<'_, LarivEpoch>>> {
+        if let Ok(e) = self.epoch.read() && self.tag.load(Ordering::Acquire) && e.check(epoch) {
+            Some(Guard { value: value.cast(), guard: e })
         } else {
             None
         }
     }
 
     #[inline]
-    pub fn get_mut_with_epoch(&self, epoch: u64) -> Option<RwLockWriteGuard<T>> {
-        if let Ok(v) = self.value.write() && self.tag.load(Ordering::Acquire) && unsafe { &*self.epoch.get() }.check(epoch) {
-            unsafe {
-                Some(transmute::<RwLockWriteGuard<MaybeUninit<T>>, RwLockWriteGuard<T>>(
-                    v,
-                ))
-            }
+    pub fn get_mut_with_epoch<T>(
+        &self,
+        value: NonNull<AtomicElement<T>>,
+        epoch: u64,
+    ) -> Option<Guard<T, RwLockWriteGuard<'_, LarivEpoch>>> {
+        if let Ok(e) = self.epoch.write() && self.tag.load(Ordering::Acquire) && e.check(epoch) {
+            Some(Guard { value: value.cast(), guard: e })
         } else {
             None
         }
     }
 
     #[inline]
-    pub fn take_with_epoch(&self, epoch: u64) -> Option<T> {
-        if let Ok(mut guard) = self.value.write() && self.tag.load(Ordering::Acquire) && unsafe { &*self.epoch.get() }.check(epoch) {
+    pub fn take_with_epoch<T>(&self, value: NonNull<AtomicElement<T>>, epoch: u64) -> Option<T> {
+        if let Ok(mut guard) = self.epoch.write() && self.tag.load(Ordering::Acquire) && guard.check(epoch) {
             self.tag.store(false, Ordering::Release);
-            Some(unsafe { replace(&mut *guard, MaybeUninit::<T>::uninit()).assume_init() })
+            guard.update();
+            Some(unsafe { replace(value.as_ptr(), MaybeUninit::<T>::uninit()).assume_init() })
         } else {
             None
         }
     }
 
     #[inline]
-    pub fn empty_with_epoch(&self, epoch: u64) {
+    pub fn empty_with_epoch<T>(&self, value: NonNull<AtomicElement<T>>, epoch: u64) {
         // Wait for the guard to get dropped
-        let mut lock = unsafe { self.value.write().unwrap_unchecked() };
-        if unsafe { &*self.epoch.get() }.check(epoch) {
+        let lock = unsafe { self.epoch.write().unwrap_unchecked() };
+        if lock.check(epoch) {
             // set tag to false, drop the inner if it was already written
             if self.tag.fetch_and(false, Ordering::AcqRel) {
-                unsafe { lock.assume_init_drop() }
+                unsafe { drop_in_place(value.as_ptr().cast::<T>()) }
             }
         }
+        drop(lock);
     }
 }
 
-impl<'a, T> SetGuard<'a, T> {
+impl<'a, E: Epoch> SetGuard<'a, E> {
     #[inline]
-    pub fn write(&mut self, value: T) {
-        (*self.guard).write(value);
+    pub fn write<T>(&mut self, ptr: NonNull<AtomicElement<T>>, value: T) {
+        unsafe { ptr.as_ptr().write(MaybeUninit::new(value)) };
         self.written = true;
     }
 }
 
-impl<T, E: Epoch> Default for AtomicOption<T, E> {
+impl<E: Epoch> Default for AtomicOptionTag<E> {
     #[inline]
     fn default() -> Self {
         Self::none()
     }
 }
 
-impl<'a, T> Drop for SetGuard<'a, T> {
+impl<'a, E: Epoch> Drop for SetGuard<'a, E> {
     #[inline]
     fn drop(&mut self) {
         self.tag.store(self.written, Ordering::Release);
     }
 }
 
-impl<T, E: Epoch> Debug for AtomicOption<T, E>
-where
-    T: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.get())
+impl<E: Epoch> Debug for AtomicOptionTag<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AtomicTag: {:?}", self.tag.load(Ordering::Acquire))
     }
 }
 
-impl<T, E: Epoch> Drop for AtomicOption<T, E> {
-    #[inline]
-    fn drop(&mut self) {
-        if *self.tag.get_mut() {
-            unsafe { self.value.get_mut().unwrap_unchecked().assume_init_drop() }
-        }
+impl<T, G: Deref> Deref for Guard<T, G> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.value.as_ref() }
     }
 }
+
+impl<T, G: DerefMut> DerefMut for Guard<T, G> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.value.as_mut() }
+    }
+}
+
+impl<T: fmt::Debug, G> fmt::Debug for Guard<T, G> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+impl<T: fmt::Display, G> fmt::Display for Guard<T, G> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+unsafe impl<T: Send, G: Send> Send for Guard<T, G> {}
+unsafe impl<T: Sync, G: Sync> Sync for Guard<T, G> {}
