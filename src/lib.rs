@@ -19,7 +19,7 @@ use std::{
 };
 
 use aliasable::prelude::*;
-use epoch::{Epoch, LarivEpoch, NoEpoch};
+pub use epoch::{Epoch, LarivEpoch, NoEpoch};
 
 use once_cell::OnceAliasableBox;
 use option::AtomicOption;
