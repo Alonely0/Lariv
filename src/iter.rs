@@ -58,13 +58,7 @@ macro_rules! iter {
                 };
                 $x.next_index = 0;
             }
-            ret = unsafe {
-                &*(*$x.current_node.as_ptr())
-                    .ptr
-                    .as_ptr()
-                    .add($x.next_index)
-            }
-            .$y();
+            ret = unsafe { &*(*$x.current_node.as_ptr()).ptr.as_ptr().add($x.next_index) }.$y();
             $x.next_index += 1;
         }
         ret
