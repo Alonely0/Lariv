@@ -201,13 +201,13 @@ impl<T, G: DerefMut> DerefMut for Guard<T, G> {
 
 impl<T: fmt::Debug, G> fmt::Debug for Guard<T, G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.value.fmt(f)
+        unsafe { self.value.as_ref() }.fmt(f)
     }
 }
 
 impl<T: fmt::Display, G> fmt::Display for Guard<T, G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.value.fmt(f)
+        unsafe { self.value.as_ref() }.fmt(f)
     }
 }
 
