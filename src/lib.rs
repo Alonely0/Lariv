@@ -3,7 +3,6 @@
 #![feature(sync_unsafe_cell)]
 #![feature(let_chains)]
 #![feature(alloc_layout_extra)]
-#![feature(const_ptr_write)]
 #![cfg_attr(miri, allow(unused_imports))]
 #![doc = include_str!("../README.md")]
 #![allow(clippy::pedantic)]
