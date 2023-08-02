@@ -31,6 +31,12 @@ mod iter;
 mod once_cell;
 mod option;
 
+macro_rules! cast_mut {
+    ($x:expr) => {
+        $x as *const _ as *mut _
+    };
+}
+
 /// # Linked Atomic Random Insert Vector.
 ///
 /// Lariv is a multithreaded data structure similar to a vector, with the exception of being able
@@ -143,14 +149,13 @@ impl<T> Lariv<T> {
             Ordering::Relaxed,
         );
         unsafe {
-            (*shared_items.head.get())
-                .write(NonNull::new_unchecked(head.as_ref() as *const _ as *mut _));
+            (*shared_items.head.get()).write(NonNull::new_unchecked(cast_mut!(head.as_ref())));
         };
 
         // return
         Lariv {
             list: head,
-            shared: unsafe { NonNull::new_unchecked(shared_items as *const _ as *mut _) },
+            shared: unsafe { NonNull::new_unchecked(cast_mut!(shared_items)) },
         }
     }
 }
@@ -297,7 +302,7 @@ impl<T, E: Epoch> LarivNode<T, E> {
             next: OnceAliasableBox::new(),
             allocated: AtomicBool::new(false),
             nth,
-            shared: unsafe { NonNull::new_unchecked(shared_items as *const _ as *mut _) },
+            shared: unsafe { NonNull::new_unchecked(cast_mut!(shared_items)) },
         }))
     }
     #[inline]
@@ -326,9 +331,7 @@ impl<T, E: Epoch> LarivNode<T, E> {
             }
             if let Some(next) = node.next.get() {
                 // traverse to the next node
-                shared
-                    .cursor_ptr
-                    .store(next as *const _ as *mut _, Ordering::Release);
+                shared.cursor_ptr.store(cast_mut!(next), Ordering::Release);
                 shared.cursor.store(1, Ordering::Release);
                 node = next;
                 index = 0;
@@ -361,7 +364,7 @@ impl<T, E: Epoch> LarivNode<T, E> {
         // create node
         let nth = self.nth + 1;
         let node = Self::new(metadata, data, nth, shared);
-        let node_ptr = node.as_ref() as *const _ as *mut _;
+        let node_ptr = cast_mut!(node.as_ref());
         // set next
         unsafe { self.next.set_unchecked(node) };
         // update shared info
