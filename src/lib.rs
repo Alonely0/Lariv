@@ -1,7 +1,6 @@
 #![feature(vec_into_raw_parts)]
 #![feature(core_intrinsics)]
 #![feature(sync_unsafe_cell)]
-#![feature(pointer_byte_offsets)]
 #![feature(let_chains)]
 #![feature(alloc_layout_extra)]
 #![feature(const_ptr_write)]
@@ -10,7 +9,7 @@
 #![allow(clippy::pedantic)]
 
 use std::{
-    alloc::{alloc_zeroed, Layout},
+    alloc::{alloc_zeroed, handle_alloc_error, Layout},
     cell::SyncUnsafeCell,
     fmt::Debug,
     intrinsics::likely,
@@ -18,7 +17,7 @@ use std::{
     ptr::NonNull,
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
-        RwLock, RwLockReadGuard, RwLockWriteGuard,
+        RwLockReadGuard, RwLockWriteGuard,
     },
 };
 
@@ -58,11 +57,12 @@ pub struct Lariv<T, E: Epoch = NoEpoch> {
 /// Node of the Linked Buffer
 #[derive(Debug)]
 struct LarivNode<T, E: Epoch> {
-    ptr: NonNull<AtomicOptionTag<E>>,   // buffer start
-    next: OnceAliasableBox<Self>,       // linked list, next node (buffer extension)
-    allocated: AtomicBool,              // set when the node has allocated.
-    nth: usize,                         // number of buffer (used for global index)
-    shared: NonNull<SharedItems<T, E>>, // shared items across nodes
+    metadata_ptr: NonNull<AtomicOptionTag<E>>, // buffer start
+    data_ptr: NonNull<AtomicElement<T>>,       // data start
+    next: OnceAliasableBox<Self>,              // linked list, next node (buffer extension)
+    allocated: AtomicBool,                     // set when the node has allocated.
+    nth: usize,                                // number of buffer (used for global index)
+    shared: NonNull<SharedItems<T, E>>,        // shared items across nodes
 }
 
 /// This stores both the node and the index of an element on a Lariv instance.
@@ -80,7 +80,6 @@ struct SharedItems<T, E: Epoch> {
     cursor: AtomicUsize,                                         // current index on current node
     cursor_ptr: AtomicPtr<LarivNode<T, E>>,                      // current node of the list
     cap: usize,                                                  // capacity (max elements)
-    pad: usize,
     allocation_threshold: AtomicIsize, // set to 30% of the capacity after reaching the end
     nodes: AtomicUsize,                // nodes allocated. Used for calculating capacity
 }
@@ -106,13 +105,19 @@ impl<T> Lariv<T> {
         Lariv::init(buf_cap)
     }
 
-    fn alloc<E: Epoch>(buf_cap: usize) -> (NonNull<AtomicOptionTag<E>>, usize) {
+    fn alloc<E: Epoch>(buf_cap: usize) -> (NonNull<AtomicOptionTag<E>>, NonNull<AtomicElement<T>>) {
         let (layout, pad) = Layout::new::<AtomicOptionTag<E>>()
             .repeat_packed(buf_cap)
             .unwrap()
             .extend(Layout::new::<AtomicElement<T>>().repeat(buf_cap).unwrap().0)
             .unwrap();
-        (unsafe { NonNull::new_unchecked(alloc_zeroed(layout.pad_to_align()).cast()) }, pad)
+        unsafe {
+            let ptr = alloc_zeroed(layout.pad_to_align());
+            (
+                NonNull::new(ptr.cast()).unwrap_or_else(|| handle_alloc_error(layout)),
+                NonNull::new_unchecked(ptr.cast::<u8>().add(pad).cast()),
+            )
+        }
     }
 
     #[must_use]
@@ -121,20 +126,19 @@ impl<T> Lariv<T> {
         assert!(buf_cap > 3, "For some reason buf_cap must be more than 3!");
 
         // allocate
-        let (ptr, pad) = Self::alloc::<E>(buf_cap);
+        let (metadata, data) = Self::alloc::<E>(buf_cap);
         // create shared items.
         let shared_items: &_ = Box::leak(Box::new(SharedItems {
             head: SyncUnsafeCell::new(MaybeUninit::uninit()),
             cursor: AtomicUsize::new(0),
             cursor_ptr: AtomicPtr::new(NonNull::dangling().as_ptr()),
             cap: buf_cap,
-            pad,
             allocation_threshold: AtomicIsize::new(0),
             nodes: AtomicUsize::new(1),
         }));
 
         // create head and set the shared pointer
-        let head = LarivNode::new(ptr.as_ptr(), 0, shared_items);
+        let head = LarivNode::new(metadata, data, 0, shared_items);
         shared_items.cursor_ptr.store(
             head.as_ref() as *const LarivNode<T, E> as *mut _,
             Ordering::Relaxed,
@@ -249,14 +253,8 @@ impl<T, E: Epoch> Lariv<T, E> {
         }
         Some(unsafe {
             (
-                &*node.ptr.as_ptr().add(li.index as usize),
-                NonNull::new_unchecked(
-                    node.ptr
-                        .as_ptr()
-                        .byte_add(shared.pad)
-                        .cast::<AtomicElement<T>>()
-                        .add(li.index as usize),
-                ),
+                &*node.metadata_ptr.as_ptr().add(li.index as usize),
+                NonNull::new_unchecked(node.data_ptr.as_ptr().add(li.index as usize)),
             )
         })
     }
@@ -289,12 +287,14 @@ impl<T, E: Epoch> Lariv<T, E> {
 
 impl<T, E: Epoch> LarivNode<T, E> {
     fn new(
-        ptr: *mut AtomicOptionTag<E>,
+        metadata_ptr: NonNull<AtomicOptionTag<E>>,
+        data_ptr: NonNull<AtomicElement<T>>,
         nth: usize,
         shared_items: &SharedItems<T, E>,
     ) -> AliasableBox<Self> {
         AliasableBox::from_unique(UniqueBox::new(Self {
-            ptr: unsafe { NonNull::new_unchecked(ptr) },
+            metadata_ptr,
+            data_ptr,
             next: OnceAliasableBox::new(),
             allocated: AtomicBool::new(false),
             nth,
@@ -311,9 +311,9 @@ impl<T, E: Epoch> LarivNode<T, E> {
         loop {
             // check availability and write the value
             if likely(index < shared.cap) && let Some(mut pos) =
-                unsafe { &*node.ptr.as_ptr().add(index) }.try_set()
+                unsafe { &*node.metadata_ptr.as_ptr().add(index) }.try_set()
             {
-                pos.write(unsafe { NonNull::new_unchecked(node.ptr.as_ptr().byte_add(shared.pad).cast::<AtomicElement<T>>().add(index).cast()) }, element);
+                pos.write(unsafe { NonNull::new_unchecked(node.data_ptr.as_ptr().add(index)) }, element);
                 break LarivIndex { node: node.nth as u64, index: index as u64, epoch: *pos.guard }
             }
             // ask for the next index, checking if it's the last one in the buffer
@@ -353,14 +353,15 @@ impl<T, E: Epoch> LarivNode<T, E> {
     fn extend(&self, first_element: T) -> LarivIndex<E> {
         let shared = self.get_shared();
         // allocate buffer
-        let (ptr, _) = Lariv::<T>::alloc::<E>(shared.cap);
+        let (metadata, data) = Lariv::<T>::alloc::<E>(shared.cap);
         // set first element
         unsafe {
-            *ptr.as_ptr().byte_add(shared.pad).cast() = RwLock::new(MaybeUninit::new(first_element))
+            metadata.as_ptr().write(AtomicOptionTag::some());
+            data.as_ptr().write(MaybeUninit::new(first_element));
         };
         // create node
         let nth = self.nth + 1;
-        let node = Self::new(ptr.as_ptr(), nth, shared);
+        let node = Self::new(metadata, data, nth, shared);
         let node_ptr = node.as_ref() as *const _ as *mut _;
         // set next
         unsafe { self.next.set_unchecked(node) };

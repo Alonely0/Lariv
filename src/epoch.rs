@@ -1,4 +1,7 @@
-use std::{sync::{atomic::Ordering, RwLockReadGuard, RwLockWriteGuard}, fmt::Debug};
+use std::{
+    fmt::Debug,
+    sync::{atomic::Ordering, RwLockReadGuard, RwLockWriteGuard},
+};
 
 use crate::{option::Guard, Lariv, LarivIndex};
 

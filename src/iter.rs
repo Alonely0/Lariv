@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    option::{AtomicElement, AtomicOptionTag, Guard},
+    option::{AtomicOptionTag, Guard},
     Epoch, Lariv, LarivNode, SharedItems,
 };
 
@@ -62,13 +62,10 @@ macro_rules! iter {
                 $x.next_index = 0;
             }
             ret = unsafe {
-                let ptr = (*$x.current_node.as_ptr()).ptr.as_ptr();
+                let node = &*$x.current_node.as_ptr();
                 AtomicOptionTag::$y(
-                    &*ptr.add($x.next_index),
-                    NonNull::new_unchecked(ptr
-                        .byte_add($x.buf.shared.as_ref().pad)
-                        .cast::<AtomicElement<T>>()
-                        .add($x.next_index)),
+                    &*node.metadata_ptr.as_ptr().add($x.next_index),
+                    NonNull::new_unchecked(node.data_ptr.as_ptr().add($x.next_index)),
                 )
             };
             $x.next_index += 1;
