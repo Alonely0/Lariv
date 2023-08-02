@@ -161,6 +161,7 @@ impl<'a, E: Epoch> SetGuard<'a, E> {
     #[inline]
     pub fn write<T>(&mut self, ptr: NonNull<AtomicElement<T>>, value: T) {
         unsafe { ptr.as_ptr().write(MaybeUninit::new(value)) };
+        self.guard.update();
         self.written = true;
     }
 }
