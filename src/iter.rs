@@ -1,4 +1,5 @@
 use std::{
+    alloc::dealloc,
     intrinsics::unlikely,
     mem::ManuallyDrop,
     ptr::NonNull,
@@ -7,7 +8,7 @@ use std::{
 
 use crate::{
     option::{AtomicOptionTag, Guard},
-    Epoch, Lariv, LarivNode, SharedItems,
+    Epoch, Lariv, LarivNode,
 };
 
 impl<'a, T, E: Epoch> Lariv<T, E> {
@@ -113,15 +114,22 @@ impl<'a, T, E: Epoch> Iterator for IterMut<'a, T, E> {
     }
 }
 
+// safe but miri hates it (stacked borrows at it again, w/ tree borrows is fine)
 impl<T, E: Epoch> Drop for IntoIter<T, E> {
     fn drop(&mut self) {
-        // it's safe but miri hates it
-        #[cfg(not(miri))]
+        let mut current_node = Some(self.buf.list.as_ref());
+        let buf_cap = self.buf.list.get_shared().cap;
+        let shared = self.buf.list.shared.as_ptr();
         unsafe {
-            drop((
-                Box::from_raw(self.buf.shared.as_ptr() as *const _ as *mut SharedItems<T, E>),
-                Box::from_raw(self.buf.list.as_ref() as *const _ as *mut LarivNode<T, E>),
-            ));
+            while let Some(node) = current_node {
+                dealloc(
+                    node.metadata_ptr.as_ptr().cast(),
+                    Lariv::<T>::get_buf_layout::<E>(buf_cap).unwrap().0,
+                );
+                current_node = node.next.get();
+                drop(Box::from_raw(node as *const _ as *mut LarivNode<T, E>));
+            }
+            drop(Box::from_raw(shared))
         }
     }
 }

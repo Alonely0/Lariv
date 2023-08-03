@@ -15,7 +15,7 @@ pub(crate) type AtomicElement<T> = MaybeUninit<T>;
 
 /// Option with an atomic tag and interior synchronization.
 pub struct AtomicOptionTag<E: Epoch> {
-    tag: AtomicBool,
+    pub(crate) tag: AtomicBool,
     epoch: RwLock<E>,
 }
 
@@ -163,6 +163,12 @@ impl<'a, E: Epoch> SetGuard<'a, E> {
         unsafe { ptr.as_ptr().write(MaybeUninit::new(value)) };
         self.guard.update();
         self.written = true;
+    }
+}
+
+impl<T, G> Guard<T, G> {
+    pub fn as_ptr(guard: Self) -> *mut T {
+        guard.value.as_ptr()
     }
 }
 

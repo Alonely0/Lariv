@@ -1,4 +1,3 @@
-#![feature(vec_into_raw_parts)]
 #![feature(core_intrinsics)]
 #![feature(sync_unsafe_cell)]
 #![feature(let_chains)]
@@ -8,12 +7,12 @@
 #![allow(clippy::pedantic)]
 
 use std::{
-    alloc::{alloc_zeroed, handle_alloc_error, Layout},
+    alloc::{alloc_zeroed, dealloc, handle_alloc_error, Layout, LayoutError},
     cell::SyncUnsafeCell,
     fmt::Debug,
     intrinsics::likely,
-    mem::{transmute, MaybeUninit},
-    ptr::NonNull,
+    mem::{needs_drop, transmute, ManuallyDrop, MaybeUninit},
+    ptr::{drop_in_place, NonNull},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
         RwLockReadGuard, RwLockWriteGuard,
@@ -55,8 +54,8 @@ macro_rules! cast_mut {
 /// [`new`]: Lariv::new
 /// [`new_with_epoch`]: Lariv::new_with_epoch
 pub struct Lariv<T, E: Epoch = NoEpoch> {
-    list: AliasableBox<LarivNode<T, E>>, // linked list to buffers
-    shared: NonNull<SharedItems<T, E>>,  // shared items across nodes
+    list: ManuallyDrop<AliasableBox<LarivNode<T, E>>>, // linked list to buffers
+    shared: NonNull<SharedItems<T, E>>,                // shared items across nodes
 }
 
 /// Node of the Linked Buffer
@@ -110,14 +109,18 @@ impl<T> Lariv<T> {
         Lariv::init(buf_cap)
     }
 
+    #[inline(always)]
+    fn get_buf_layout<E: Epoch>(buf_cap: usize) -> Result<(Layout, usize), LayoutError> {
+        Layout::new::<AtomicOptionTag<E>>()
+            .repeat_packed(buf_cap)?
+            .extend(Layout::new::<AtomicElement<T>>().repeat(buf_cap)?.0)
+            .map(|(l, p)| (l.pad_to_align(), p))
+    }
+
     fn alloc<E: Epoch>(buf_cap: usize) -> (NonNull<AtomicOptionTag<E>>, NonNull<AtomicElement<T>>) {
-        let (layout, pad) = Layout::new::<AtomicOptionTag<E>>()
-            .repeat_packed(buf_cap)
-            .unwrap()
-            .extend(Layout::new::<AtomicElement<T>>().repeat(buf_cap).unwrap().0)
-            .unwrap();
+        let (layout, pad) = Self::get_buf_layout::<E>(buf_cap).unwrap();
         unsafe {
-            let ptr = alloc_zeroed(layout.pad_to_align());
+            let ptr = alloc_zeroed(layout);
             (
                 NonNull::new(ptr.cast()).unwrap_or_else(|| handle_alloc_error(layout)),
                 NonNull::new_unchecked(ptr.cast::<u8>().add(pad).cast()),
@@ -154,7 +157,7 @@ impl<T> Lariv<T> {
 
         // return
         Lariv {
-            list: head,
+            list: ManuallyDrop::new(head),
             shared: unsafe { NonNull::new_unchecked(cast_mut!(shared_items)) },
         }
     }
@@ -305,13 +308,13 @@ impl<T, E: Epoch> LarivNode<T, E> {
             shared: unsafe { NonNull::new_unchecked(cast_mut!(shared_items)) },
         }))
     }
+
     #[inline]
     fn push(&self, element: T) -> LarivIndex<E> {
         let mut node = self;
         let shared = self.get_shared();
         // claim an index in the current node in the cursor
         let mut index = shared.cursor.fetch_add(1, Ordering::AcqRel);
-        // avoid recursion
         loop {
             // check availability and write the value
             if likely(index < shared.cap) && let Some(mut pos) =
@@ -411,28 +414,31 @@ impl<T: Debug> Debug for Lariv<T> {
     }
 }
 
-// impl<T, E: Epoch> Drop for Lariv<T, E> {
-//     fn drop(&mut self) {
-//         let mut next = Some(self.list.as_ref());
-//         let cap = self.list.get_shared().cap;
-//         while let Some(node) = next {
-//             unsafe {
-//                 // the vec handles the drop, which should be
-//                 // `std::ptr::drop_in_place` on each element
-//                 // and then free the allocation.
-//                 drop(Vec::from_raw_parts(node.ptr.as_ptr(), cap, cap));
-//             };
-//             next = node.next.get();
-//         }
-//         // it's safe but miri hates it
-//         #[cfg(not(miri))]
-//         unsafe {
-//             drop(Box::from_raw(
-//                 self.list.get_shared() as *const _ as *mut SharedItems<T, E>
-//             ));
-//         }
-//     }
-// }
+// safe but miri hates it (stacked borrows at it again, w/ tree borrows is fine)
+impl<T, E: Epoch> Drop for Lariv<T, E> {
+    fn drop(&mut self) {
+        let mut current_node = Some(self.list.as_ref());
+        let buf_cap = self.list.get_shared().cap;
+        unsafe {
+            while let Some(node) = current_node {
+                if needs_drop::<T>() {
+                    for i in 0..buf_cap {
+                        if *(*node.metadata_ptr.as_ptr().add(i)).tag.get_mut() {
+                            drop_in_place(node.data_ptr.as_ptr().cast::<T>().add(i));
+                        }
+                    }
+                }
+                dealloc(
+                    node.metadata_ptr.as_ptr().cast(),
+                    Lariv::<T>::get_buf_layout::<E>(buf_cap).unwrap().0,
+                );
+                current_node = node.next.get();
+                drop(Box::from_raw(node as *const _ as *mut LarivNode<T, E>));
+            }
+            drop(Box::from_raw(self.shared.as_ptr()))
+        }
+    }
+}
 
 impl LarivIndex {
     #[inline]

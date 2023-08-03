@@ -1,10 +1,7 @@
 use std::debug_assert;
 use std::mem::forget;
 use std::ptr::null_mut;
-use std::{
-    mem::transmute,
-    sync::atomic::{AtomicPtr, Ordering},
-};
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use aliasable::prelude::AliasableBox;
 
@@ -34,17 +31,6 @@ impl<T> OnceAliasableBox<T> {
         self.inner
             .store(v.as_ref() as *const T as *mut T, Ordering::Release);
         forget(v);
-    }
-}
-
-impl<T> Drop for OnceAliasableBox<T> {
-    fn drop(&mut self) {
-        let ptr = *self.inner.get_mut();
-        if !ptr.is_null() {
-            // safe but miri hates it.
-            #[cfg(not(miri))]
-            drop(unsafe { transmute::<*mut T, AliasableBox<T>>(ptr) });
-        }
     }
 }
 
