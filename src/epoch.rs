@@ -1,6 +1,9 @@
-use std::sync::{atomic::Ordering, RwLockReadGuard, RwLockWriteGuard};
+use std::{
+    fmt::Debug,
+    sync::{atomic::Ordering, RwLockReadGuard, RwLockWriteGuard},
+};
 
-use crate::{Lariv, LarivIndex};
+use crate::{option::Guard, Lariv, LarivIndex};
 
 pub trait Epoch: Copy {
     fn new(e: u64) -> Self;
@@ -62,9 +65,12 @@ impl<T> Lariv<T, LarivEpoch> {
     /// [`take`]: Lariv::take
     /// [`new_with_epoch`]: Lariv::new_with_epoch
     #[inline]
-    pub fn get_with_epoch(&self, index: LarivIndex<LarivEpoch>) -> Option<RwLockReadGuard<T>> {
+    pub fn get_with_epoch(
+        &self,
+        index: LarivIndex<LarivEpoch>,
+    ) -> Option<Guard<T, RwLockReadGuard<'_, LarivEpoch>>> {
         self.get_ptr(index)
-            .and_then(|p| unsafe { &*p }.get_with_epoch(index.epoch.0))
+            .and_then(|(tag, e)| tag.get_with_epoch(e, index.epoch.0))
     }
 
     /// Gets a mutable reference to an element via its [`LarivIndex`]. While this is held,
@@ -78,9 +84,12 @@ impl<T> Lariv<T, LarivEpoch> {
     /// [`take`]: Lariv::take
     /// [`new_with_epoch`]: Lariv::new_with_epoch
     #[inline]
-    pub fn get_mut_with_epoch(&self, index: LarivIndex<LarivEpoch>) -> Option<RwLockWriteGuard<T>> {
+    pub fn get_mut_with_epoch(
+        &self,
+        index: LarivIndex<LarivEpoch>,
+    ) -> Option<Guard<T, RwLockWriteGuard<'_, LarivEpoch>>> {
         self.get_ptr(index)
-            .and_then(|p| unsafe { &*p }.get_mut_with_epoch(index.epoch.0))
+            .and_then(|(tag, e)| tag.get_mut_with_epoch(e, index.epoch.0))
     }
 
     /// Removes an element from the Lariv, ensuring it is the correct element. This is
@@ -92,8 +101,10 @@ impl<T> Lariv<T, LarivEpoch> {
     /// [`new_with_epoch`]: Lariv::new_with_epoch
     #[inline]
     pub fn remove_with_epoch(&self, index: LarivIndex<LarivEpoch>) {
-        let Some(e) = self.get_ptr(index) else { return };
-        unsafe { &*e }.empty_with_epoch(index.epoch.0);
+        let Some((tag, e)) = self.get_ptr(index) else {
+            return;
+        };
+        tag.empty_with_epoch(e, index.epoch.0);
         unsafe { self.shared.as_ref() }
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
@@ -112,6 +123,7 @@ impl<T> Lariv<T, LarivEpoch> {
         unsafe { self.shared.as_ref() }
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
-        unsafe { &*self.get_ptr(index)? }.take_with_epoch(index.epoch.0)
+        self.get_ptr(index)
+            .and_then(|(tag, e)| tag.take_with_epoch(e, index.epoch.0))
     }
 }

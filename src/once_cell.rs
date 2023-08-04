@@ -1,22 +1,16 @@
 use std::debug_assert;
-use std::mem::forget;
-use std::ptr::null_mut;
-use std::{
-    mem::transmute,
-    sync::atomic::{AtomicPtr, Ordering},
-};
-
-use aliasable::prelude::AliasableBox;
+use std::ptr::{null_mut, NonNull};
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct OnceAliasableBox<T> {
+pub struct OncePtr<T> {
     inner: AtomicPtr<T>,
 }
 
-impl<T> OnceAliasableBox<T> {
-    pub const fn new() -> OnceAliasableBox<T> {
-        OnceAliasableBox {
+impl<T> OncePtr<T> {
+    pub const fn new() -> OncePtr<T> {
+        Self {
             inner: AtomicPtr::new(null_mut()),
         }
     }
@@ -29,23 +23,11 @@ impl<T> OnceAliasableBox<T> {
         Some(unsafe { &*ptr })
     }
 
-    pub unsafe fn set_unchecked(&self, v: AliasableBox<T>) {
+    pub unsafe fn set_unchecked(&self, v: NonNull<T>) {
         debug_assert!(self.inner.load(Ordering::Acquire).is_null());
-        self.inner
-            .store(v.as_ref() as *const T as *mut T, Ordering::Release);
-        forget(v);
+        self.inner.store(v.as_ptr(), Ordering::Release);
     }
 }
 
-impl<T> Drop for OnceAliasableBox<T> {
-    fn drop(&mut self) {
-        let ptr = *self.inner.get_mut();
-        if !ptr.is_null() {
-            // safe but miri hates it.
-            #[cfg(not(miri))]
-            drop(unsafe { transmute::<*mut T, AliasableBox<T>>(ptr) })
-        }
-    }
-}
-
-unsafe impl<T: Sync + Send> Sync for OnceAliasableBox<T> {}
+unsafe impl<T: Send> Send for OncePtr<T> {}
+unsafe impl<T: Sync> Sync for OncePtr<T> {}

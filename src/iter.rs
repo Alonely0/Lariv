@@ -1,11 +1,16 @@
 use std::{
+    alloc::dealloc,
     intrinsics::unlikely,
     mem::ManuallyDrop,
     ptr::NonNull,
     sync::{RwLockReadGuard, RwLockWriteGuard},
 };
 
-use crate::{Epoch, Lariv, LarivNode, SharedItems};
+use crate::{
+    alloc::layout,
+    option::{AtomicOptionTag, Guard},
+    Epoch, Lariv, LarivNode,
+};
 
 impl<'a, T, E: Epoch> Lariv<T, E> {
     pub fn iter(&'a self) -> Iter<'a, T, E> {
@@ -58,7 +63,13 @@ macro_rules! iter {
                 };
                 $x.next_index = 0;
             }
-            ret = unsafe { &*(*$x.current_node.as_ptr()).ptr.as_ptr().add($x.next_index) }.$y();
+            ret = unsafe {
+                let node = &*$x.current_node.as_ptr();
+                AtomicOptionTag::$y(
+                    &*node.metadata_ptr().as_ptr().add($x.next_index),
+                    NonNull::new_unchecked(node.data_ptr().as_ptr().add($x.next_index)),
+                )
+            };
             $x.next_index += 1;
         }
         ret
@@ -89,7 +100,7 @@ impl<T, E: Epoch> Iterator for IntoIter<T, E> {
 }
 
 impl<'a, T, E: Epoch> Iterator for Iter<'a, T, E> {
-    type Item = RwLockReadGuard<'a, T>;
+    type Item = Guard<T, RwLockReadGuard<'a, E>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         iter!(self, get)
@@ -97,22 +108,24 @@ impl<'a, T, E: Epoch> Iterator for Iter<'a, T, E> {
 }
 
 impl<'a, T, E: Epoch> Iterator for IterMut<'a, T, E> {
-    type Item = RwLockWriteGuard<'a, T>;
+    type Item = Guard<T, RwLockWriteGuard<'a, E>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         iter!(self, get_mut)
     }
 }
 
+// safe but miri hates it (stacked borrows at it again, w/ tree borrows is fine)
 impl<T, E: Epoch> Drop for IntoIter<T, E> {
     fn drop(&mut self) {
-        // it's safe but miri hates it
-        #[cfg(not(miri))]
+        let mut current_node = Some(unsafe { self.buf.list.as_ref() });
+        let buf_cap = unsafe { self.buf.list.as_ref() }.get_shared().cap;
         unsafe {
-            drop((
-                Box::from_raw(self.buf.shared.as_ptr() as *const _ as *mut SharedItems<T, E>),
-                Box::from_raw(self.buf.list.as_ref() as *const _ as *mut LarivNode<T, E>),
-            ));
+            while let Some(node) = current_node {
+                current_node = node.next.get();
+                dealloc(node as *const _ as *mut u8, layout::<T, E>(buf_cap));
+            }
+            drop(Box::from_raw(self.buf.shared.as_ptr()))
         }
     }
 }
