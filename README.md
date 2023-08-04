@@ -41,7 +41,7 @@ fn example() {
 
 # Safety
 
-Miri doesn't complain. If you encounter a bug, open an issue please.
+Miri with tree borrows doesn't complain. If you encounter a bug, open an issue please.
 
 
 # Performance
