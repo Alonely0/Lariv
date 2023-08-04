@@ -13,11 +13,6 @@ categories = ["concurrency", "data-structures", "database-implementations", "mem
 exclude = [".github/workflows/"]
 
 [dependencies]
-aliasable = { version = "0.1.3", features = [
-    "aliasable_deref_trait",
-    "traits",
-    "stable_deref_trait",
-] }
 
 [dev-dependencies]
 dashmap = "5.4.0"
