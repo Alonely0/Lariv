@@ -53,7 +53,7 @@ jobs:
           components: miri
       - name: Test
         env:
-          MIRIFLAGS: "-Zmiri-backtrace=full -Zmiri-ignore-leaks -Zmiri-disable-isolation"
+          MIRIFLAGS: "-Zmiri-backtrace=full -Zmiri-disable-stacked-borrows -Zmiri-tree-borrows"
         run: cargo miri test --all-features
   formatting:
     name: Formatting
