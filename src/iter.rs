@@ -16,17 +16,13 @@ impl<'a, T, E: Epoch> Lariv<T, E> {
     pub fn iter(&'a self) -> Iter<'a, T, E> {
         Iter {
             buf: self,
-            current_node: unsafe {
-                NonNull::new_unchecked(self.list.as_ref() as *const _ as *mut _)
-            },
+            current_node: self.list,
             next_index: 0,
         }
     }
     pub fn iter_mut(&'a self) -> IterMut<'a, T, E> {
         IterMut {
-            current_node: unsafe {
-                NonNull::new_unchecked(self.list.as_ref() as *const _ as *mut _)
-            },
+            current_node: self.list,
             buf: self,
             next_index: 0,
         }
@@ -57,9 +53,7 @@ macro_rules! iter {
         while ret.is_none() {
             if unlikely($x.next_index >= $x.buf.node_capacity()) {
                 $x.current_node = unsafe {
-                    NonNull::new_unchecked(
-                        (&*$x.current_node.as_ptr()).next.get()? as *const _ as *mut _
-                    )
+                        (&*$x.current_node.as_ptr()).next.get()?.into()
                 };
                 $x.next_index = 0;
             }
@@ -82,9 +76,7 @@ impl<T, E: Epoch> IntoIterator for Lariv<T, E> {
 
     fn into_iter(self) -> Self::IntoIter {
         IntoIter {
-            current_node: unsafe {
-                NonNull::new_unchecked(self.list.as_ref() as *const _ as *mut _)
-            },
+            current_node: self.list,
             buf: ManuallyDrop::new(self),
             next_index: 0,
         }

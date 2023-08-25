@@ -1,7 +1,5 @@
 #![feature(core_intrinsics)]
-#![feature(sync_unsafe_cell)]
 #![feature(let_chains)]
-#![feature(alloc_layout_extra)]
 #![feature(const_alloc_error)]
 #![cfg_attr(miri, allow(unused_imports))]
 #![doc = include_str!("../README.md")]
@@ -9,15 +7,13 @@
 
 use std::{
     alloc::dealloc,
-    cell::SyncUnsafeCell,
     fmt::Debug,
-    intrinsics::likely,
     mem::{needs_drop, transmute, MaybeUninit},
     ptr::{drop_in_place, NonNull},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
         RwLockReadGuard, RwLockWriteGuard,
-    },
+    }, intrinsics::likely,
 };
 
 use alloc::{allocate, data_offset, layout, metadata_offset, AddBytes};
@@ -80,12 +76,12 @@ pub struct LarivIndex<E: Epoch = NoEpoch> {
 /// Variables shared between nodes
 #[derive(Debug)]
 struct SharedItems<T, E: Epoch> {
-    head: SyncUnsafeCell<MaybeUninit<NonNull<LarivNode<T, E>>>>, // pointer to the first node. Set after initialization
-    cursor: AtomicUsize,                                         // current index on current node
-    cursor_ptr: AtomicPtr<LarivNode<T, E>>,                      // current node of the list
-    cap: usize,                                                  // capacity (max elements)
+    head: NonNull<LarivNode<T, E>>, // pointer to the first node. Set after initialization
+    cursor: AtomicUsize,            // current index on current node
+    cursor_ptr: AtomicPtr<LarivNode<T, E>>, // current node of the list
+    cap: usize,                     // capacity (max elements)
     allocation_threshold: AtomicIsize, // set to 30% of the capacity after reaching the end
-    nodes: AtomicUsize,                // nodes allocated. Used for calculating capacity
+    nodes: AtomicUsize,             // nodes allocated. Used for calculating capacity
 }
 
 impl<T> Lariv<T> {
@@ -116,11 +112,12 @@ impl<T> Lariv<T> {
 
         // allocate
         let head = allocate::<T, E>(buf_cap);
+
         // create shared items.
-        let shared_items: &_ = Box::leak(Box::new(SharedItems {
-            head: SyncUnsafeCell::new(MaybeUninit::uninit()),
+        let shared_items = Box::leak(Box::new(SharedItems {
+            head,
             cursor: AtomicUsize::new(0),
-            cursor_ptr: AtomicPtr::new(NonNull::dangling().as_ptr()),
+            cursor_ptr: AtomicPtr::new(head.as_ptr()),
             cap: buf_cap,
             allocation_threshold: AtomicIsize::new(0),
             nodes: AtomicUsize::new(1),
@@ -128,17 +125,11 @@ impl<T> Lariv<T> {
 
         // create head and set the shared pointer
         LarivNode::write_in_place(head, 0, shared_items);
-        shared_items
-            .cursor_ptr
-            .store(head.as_ptr(), Ordering::Relaxed);
-        unsafe {
-            (*shared_items.head.get()).write(NonNull::new_unchecked(cast_mut!(head.as_ref())));
-        };
 
         // return
         Lariv {
             list: head,
-            shared: unsafe { NonNull::new_unchecked(cast_mut!(shared_items)) },
+            shared: shared_items.into(),
         }
     }
 }
@@ -290,7 +281,7 @@ impl<T, E: Epoch> LarivNode<T, E> {
                 next: OncePtr::new(),
                 allocated: AtomicBool::new(false),
                 nth,
-                shared: NonNull::new_unchecked(cast_mut!(shared_items)),
+                shared: shared_items.into(),
             })
         }
     }
@@ -328,7 +319,7 @@ impl<T, E: Epoch> LarivNode<T, E> {
                 shared
                     .allocation_threshold
                     .store(node.calculate_allocate_threshold(), Ordering::Release);
-                let head = unsafe { (*shared.head.get()).assume_init_ref().as_ptr() };
+                let head = shared.head.as_ptr();
                 shared.cursor_ptr.store(head, Ordering::Release);
                 shared.cursor.store(1, Ordering::Release);
                 node = unsafe { &*head };
