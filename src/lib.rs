@@ -8,12 +8,13 @@
 use std::{
     alloc::dealloc,
     fmt::Debug,
+    intrinsics::likely,
     mem::{needs_drop, transmute, MaybeUninit},
     ptr::{drop_in_place, NonNull},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
         RwLockReadGuard, RwLockWriteGuard,
-    }, intrinsics::likely,
+    },
 };
 
 use alloc::{allocate, data_offset, layout, metadata_offset, AddBytes};
@@ -292,7 +293,7 @@ impl<T, E: Epoch> LarivNode<T, E> {
         let shared = self.get_shared();
         // claim an index in the current node in the cursor
         let mut index = shared.cursor.fetch_add(1, Ordering::AcqRel);
-        loop {
+        'push: loop {
             // check availability and write the value
             if likely(index < shared.cap) && let Some(mut pos) =
                 unsafe { &*node.metadata_ptr().as_ptr().add(index) }.try_set()
@@ -300,21 +301,38 @@ impl<T, E: Epoch> LarivNode<T, E> {
                 pos.write(unsafe { NonNull::new_unchecked(node.data_ptr().as_ptr().add(index)) }, element);
                 break LarivIndex { node: node.nth as u64, index: index as u64, epoch: *pos.guard }
             }
-            // ask for the next index, checking if it's the last one in the buffer
-            node = unsafe { &*shared.cursor_ptr.load(Ordering::Acquire) };
-            let i = shared.cursor.load(Ordering::Acquire);
-            if i > shared.cap {
-                index = (i - 1) % shared.cap;
-            } else {
-                index = shared.cursor.fetch_add(1, Ordering::AcqRel);
-                continue;
+
+            // I don't like how fetch_update codegens, it's kinda inefficient for this
+            // because I'd be forced to have branches inside the closure, and I can
+            // just optimize them manually.
+            index = shared.cursor.load(Ordering::Acquire);
+            'cas: loop {
+                if likely(index < shared.cap) {
+                    match shared.cursor.compare_exchange_weak(
+                        index,
+                        index + 1,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(x) => {
+                            node = unsafe { &*shared.cursor_ptr.load(Ordering::Acquire) };
+                            index = x;
+                            continue 'push;
+                        }
+                        Err(next_prev) => index = next_prev,
+                    }
+                } else {
+                    break 'cas;
+                }
             }
+
             if let Some(next) = node.next.get() {
                 // traverse to the next node
-                shared.cursor_ptr.store(cast_mut!(next), Ordering::Release);
-                shared.cursor.store(1, Ordering::Release);
                 node = next;
-                index = 0;
+                index -= shared.cap;
+                shared.cursor_ptr.store(cast_mut!(next), Ordering::Release);
+                shared.cursor.store(index + 1, Ordering::Release);
+                continue 'push;
             } else if shared.allocation_threshold.load(Ordering::Acquire) <= 0 {
                 shared
                     .allocation_threshold
@@ -324,8 +342,9 @@ impl<T, E: Epoch> LarivNode<T, E> {
                 shared.cursor.store(1, Ordering::Release);
                 node = unsafe { &*head };
                 index = 0;
+                continue 'push;
             } else if !node.allocated.fetch_or(true, Ordering::AcqRel) {
-                break node.extend(element);
+                break 'push node.extend(element);
             }
         }
     }

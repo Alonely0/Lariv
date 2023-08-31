@@ -52,9 +52,7 @@ macro_rules! iter {
         let mut ret = None;
         while ret.is_none() {
             if unlikely($x.next_index >= $x.buf.node_capacity()) {
-                $x.current_node = unsafe {
-                        (&*$x.current_node.as_ptr()).next.get()?.into()
-                };
+                $x.current_node = unsafe { (&*$x.current_node.as_ptr()).next.get()?.into() };
                 $x.next_index = 0;
             }
             ret = unsafe {
