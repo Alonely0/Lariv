@@ -10,6 +10,7 @@ use std::{
     fmt::Debug,
     intrinsics::likely,
     mem::{needs_drop, transmute, MaybeUninit},
+    ops::Mul,
     ptr::{drop_in_place, NonNull},
     sync::{
         atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicUsize, Ordering},
@@ -356,7 +357,10 @@ impl<T, E: Epoch> LarivNode<T, E> {
         // allocate buffer
         let alloc = allocate::<T, E>(shared.cap);
         let node = unsafe { alloc.as_ref() };
-        let nth_offset = self.nth.checked_add(2).expect("The number of nodes has overflown.");
+        let nth_offset = self
+            .nth
+            .checked_add(2)
+            .expect("The number of nodes has overflown.");
         let nth = nth_offset - 1;
         Self::write_in_place(alloc, nth, unsafe { self.shared.as_ref() });
         // set first element
@@ -385,9 +389,17 @@ impl<T, E: Epoch> LarivNode<T, E> {
 
     #[inline]
     fn calculate_allocate_threshold(&self) -> isize {
-        // 30% of total capacity
         let shared = self.get_shared();
-        ((shared.nodes.load(Ordering::Acquire) * shared.cap) as f64 * 0.3) as isize
+        /// Percentage [`FACTOR`] of the total capacity
+        const FACTOR: f64 = 0.3;
+        unsafe {
+            (shared
+                .nodes
+                .load(Ordering::Acquire)
+                .saturating_mul(shared.cap) as f64)
+                .mul(FACTOR)
+                .to_int_unchecked()
+        }
     }
 
     #[inline(always)]
