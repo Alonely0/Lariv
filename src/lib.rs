@@ -356,7 +356,8 @@ impl<T, E: Epoch> LarivNode<T, E> {
         // allocate buffer
         let alloc = allocate::<T, E>(shared.cap);
         let node = unsafe { alloc.as_ref() };
-        let nth = self.nth + 1;
+        let nth_offset = self.nth.checked_add(2).expect("The number of nodes has overflown.");
+        let nth = nth_offset - 1;
         Self::write_in_place(alloc, nth, unsafe { self.shared.as_ref() });
         // set first element
         unsafe {
@@ -369,7 +370,7 @@ impl<T, E: Epoch> LarivNode<T, E> {
         // set next
         unsafe { self.next.set_unchecked(alloc) };
         // update shared info
-        shared.nodes.fetch_add(1, Ordering::AcqRel);
+        shared.nodes.store(nth_offset, Ordering::Release); // checked earlier
         shared
             .allocation_threshold
             .store(self.calculate_allocate_threshold(), Ordering::Release);
