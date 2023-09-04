@@ -148,14 +148,7 @@ impl<T, E: Epoch> Lariv<T, E> {
         //
         // # Safety
         // `self.shared` lives as much as `&self`.
-        unsafe {
-            &*self
-                .shared
-                .as_ref()
-                .cursor_ptr
-                .load(Ordering::Acquire)
-        }
-        .push(conn)
+        unsafe { &*self.shared.as_ref().cursor_ptr.load(Ordering::Acquire) }.push(conn)
     }
 
     /// Gets an immutable reference to an element via its [`LarivIndex`]. While this is held,
@@ -208,7 +201,8 @@ impl<T, E: Epoch> Lariv<T, E> {
 
         // # Safety
         // `self.list` lives as much as `&self`.
-        unsafe { self.list.as_ref() }.get_shared()
+        unsafe { self.list.as_ref() }
+            .get_shared()
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
     }
@@ -226,7 +220,8 @@ impl<T, E: Epoch> Lariv<T, E> {
     pub fn take<I: Epoch>(&self, index: LarivIndex<I>) -> Option<T> {
         // # Safety
         // `self.list` lives as much as `&self`.
-        unsafe { self.list.as_ref() }.get_shared()
+        unsafe { self.list.as_ref() }
+            .get_shared()
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
         self.get_ptr(index).and_then(|(tag, e)| tag.take(e))
@@ -388,7 +383,7 @@ impl<T, E: Epoch> LarivNode<T, E> {
             .expect("The number of nodes has overflown.");
         let nth = nth_offset - 1;
         let alloc = allocate::<T, E>(shared.cap);
-        
+
         // # Safety
         // The allocation is checked to be valid, and the node gets initialized.
         // Then, a reference to it is created.

@@ -1,7 +1,7 @@
 //! Notice to mariners: Do not ever touch this. If you absolutely have to,
 //! use the code in std::alloc as a reference and NEVER deviate from it.
 //! Then, test with miri until she's happy. You have been warned.
-//! 
+//!
 //! # Safety
 //! Check std::alloc.
 use std::{
