@@ -108,14 +108,19 @@ impl<'a, T, E: Epoch> Iterator for IterMut<'a, T, E> {
 // safe but miri hates it (stacked borrows at it again, w/ tree borrows is fine)
 impl<T, E: Epoch> Drop for IntoIter<T, E> {
     fn drop(&mut self) {
+        // # Safety
+        // `self.buf.list` lives as much as `self.buf`. Both are dropped later.
         let mut current_node = Some(unsafe { self.buf.list.as_ref() });
         let buf_cap = unsafe { self.buf.list.as_ref() }.get_shared().cap;
-        unsafe {
             while let Some(node) = current_node {
                 current_node = node.next.get();
-                dealloc(node as *const _ as *mut u8, layout::<T, E>(buf_cap));
+                // # Safety
+                // The allocation is freed with the same layout from its initial allocation.
+                unsafe { dealloc(node as *const _ as *mut u8, layout::<T, E>(buf_cap)) };
             }
-            drop(Box::from_raw(self.buf.shared.as_ptr()))
-        }
+            // # Safety
+            // No pointers to anything on `self.buf.shared` are still alive, and it was
+            // allocated by [`Box`].
+            drop(unsafe { Box::from_raw(self.buf.shared.as_ptr()) })
     }
 }

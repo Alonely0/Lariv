@@ -86,6 +86,9 @@ impl<E: Epoch> AtomicOptionTag<E> {
     pub fn take<T>(&self, value: NonNull<AtomicElement<T>>) -> Option<T> {
         if let Ok(guard) = self.epoch.write() && self.tag.load(Ordering::Acquire) {
             self.tag.store(false, Ordering::Release);
+
+            // # Safety
+            // Exclusive access is held, the tag is unset, and the value has been checked to be valid.
             let e = unsafe { replace(value.as_ptr(), MaybeUninit::<T>::uninit()).assume_init() };
             drop(guard);
             Some(e)
@@ -97,9 +100,11 @@ impl<E: Epoch> AtomicOptionTag<E> {
     #[inline]
     pub fn empty<T>(&self, value: NonNull<AtomicElement<T>>) {
         // Wait for the guard to get dropped
-        let lock = unsafe { self.epoch.write().unwrap_unchecked() };
+        let lock = self.epoch.write().unwrap();
         // set tag to false, drop the inner if it was already written
         if self.tag.fetch_and(false, Ordering::AcqRel) {
+            // # Safety
+            // Exclusive access is held, the tag is unset, and the value has been checked to be valid.
             unsafe { drop_in_place(value.as_ptr().cast::<T>()) }
         }
         drop(lock);
@@ -137,6 +142,9 @@ impl AtomicOptionTag<LarivEpoch> {
         if let Ok(mut guard) = self.epoch.write() && self.tag.load(Ordering::Acquire) && guard.check(epoch) {
             self.tag.store(false, Ordering::Release);
             guard.update();
+
+            // # Safety
+            // Exclusive access is held, the tag is unset, and the value has been checked to be valid.
             Some(unsafe { replace(value.as_ptr(), MaybeUninit::<T>::uninit()).assume_init() })
         } else {
             None
@@ -146,10 +154,12 @@ impl AtomicOptionTag<LarivEpoch> {
     #[inline]
     pub fn empty_with_epoch<T>(&self, value: NonNull<AtomicElement<T>>, epoch: u64) {
         // Wait for the guard to get dropped
-        let lock = unsafe { self.epoch.write().unwrap_unchecked() };
+        let lock = self.epoch.write().unwrap();
         if lock.check(epoch) {
             // set tag to false, drop the inner if it was already written
             if self.tag.fetch_and(false, Ordering::AcqRel) {
+                // # Safety
+                // Exclusive access is held, the tag is unset, and the value has been checked to be valid.
                 unsafe { drop_in_place(value.as_ptr().cast::<T>()) }
             }
         }
@@ -160,6 +170,8 @@ impl AtomicOptionTag<LarivEpoch> {
 impl<'a, E: Epoch> SetGuard<'a, E> {
     #[inline]
     pub fn write<T>(&mut self, ptr: NonNull<AtomicElement<T>>, value: T) {
+        // # Safety
+        // Exclusive access is held.
         unsafe { ptr.as_ptr().write(MaybeUninit::new(value)) };
         self.guard.update();
         self.written = true;
@@ -196,27 +208,40 @@ impl<T, G: Deref> Deref for Guard<T, G> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
+        // # Safety
+        // The value has been checked to be valid.
         unsafe { self.value.as_ref() }
     }
 }
 
 impl<T, G: DerefMut> DerefMut for Guard<T, G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        // # Safety
+        // The value has been checked to be valid.
         unsafe { self.value.as_mut() }
     }
 }
 
 impl<T: fmt::Debug, G> fmt::Debug for Guard<T, G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // # Safety
+        // The value has been checked to be valid.
         unsafe { self.value.as_ref() }.fmt(f)
     }
 }
 
 impl<T: fmt::Display, G> fmt::Display for Guard<T, G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // # Safety
+        // The value has been checked to be valid.
         unsafe { self.value.as_ref() }.fmt(f)
     }
 }
 
-unsafe impl<T: Send, G: Send> Send for Guard<T, G> {}
-unsafe impl<T: Sync, G: Sync> Sync for Guard<T, G> {}
+/// # Safety.
+/// The inner guard is responsible of the [`Send`] safety.
+unsafe impl<T, G: Send> Send for Guard<T, G> {}
+
+/// # Safety.
+/// The inner guard is responsible of the [`Sync`] safety.
+unsafe impl<T, G: Sync> Sync for Guard<T, G> {}

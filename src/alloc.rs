@@ -1,6 +1,9 @@
-/// Notice to mariners: Do not ever touch this. If you absolutely have to,
-/// use the code in std::alloc as a reference and NEVER deviate from it.
-/// Then, test with miri until she's happy. You have been warned.
+//! Notice to mariners: Do not ever touch this. If you absolutely have to,
+//! use the code in std::alloc as a reference and NEVER deviate from it.
+//! Then, test with miri until she's happy. You have been warned.
+//! 
+//! # Safety
+//! Check std::alloc.
 use std::{
     alloc::{alloc_zeroed, handle_alloc_error, Layout},
     ptr::NonNull,
@@ -161,19 +164,21 @@ pub(crate) fn allocate<T, E: Epoch>(buf_cap: usize) -> NonNull<LarivNode<T, E>> 
 }
 
 pub(crate) trait AddBytes<T> {
-    fn add_bytes(self, bytes: usize) -> Self;
+    /// # Safety
+    /// pointer + `bytes` must not overflow.
+    unsafe fn add_bytes(self, bytes: usize) -> Self;
 }
 
 impl<T> AddBytes<T> for *const T {
     #[inline(always)]
-    fn add_bytes(self, bytes: usize) -> Self {
-        unsafe { self.cast::<u8>().add(bytes).cast::<T>() }
+    unsafe fn add_bytes(self, bytes: usize) -> Self {
+        self.cast::<u8>().add(bytes).cast::<T>()
     }
 }
 
 impl<T> AddBytes<T> for *mut T {
     #[inline(always)]
-    fn add_bytes(self, bytes: usize) -> Self {
-        unsafe { self.cast::<u8>().add(bytes).cast::<T>() }
+    unsafe fn add_bytes(self, bytes: usize) -> Self {
+        self.cast::<u8>().add(bytes).cast::<T>()
     }
 }

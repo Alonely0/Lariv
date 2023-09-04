@@ -23,6 +23,8 @@ impl<T> OncePtr<T> {
         Some(unsafe { &*ptr })
     }
 
+    /// # Safety
+    /// This function can only be called once.
     pub unsafe fn set_unchecked(&self, v: NonNull<T>) {
         debug_assert!(self.inner.load(Ordering::Acquire).is_null());
         self.inner.store(v.as_ptr(), Ordering::Release);

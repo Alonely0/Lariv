@@ -112,10 +112,10 @@ impl<T> Lariv<T> {
         // tbh idk
         assert!(buf_cap > 3, "For some reason buf_cap must be more than 3!");
 
-        // allocate
+        // Allocate
         let head = allocate::<T, E>(buf_cap);
 
-        // create shared items.
+        // Create the shared items.
         let shared_items = Box::leak(Box::new(SharedItems {
             head,
             cursor: AtomicUsize::new(0),
@@ -125,8 +125,11 @@ impl<T> Lariv<T> {
             nodes: AtomicUsize::new(1),
         }));
 
-        // create head and set the shared pointer
-        LarivNode::write_in_place(head, 0, shared_items);
+        // Create the head.
+        //
+        // # Safety
+        // The allocation has been checked to be valid.
+        unsafe { LarivNode::write_in_place(head, 0, shared_items) };
 
         // return
         Lariv {
@@ -140,13 +143,15 @@ impl<T, E: Epoch> Lariv<T, E> {
     /// Inserts a new element into the [`Lariv`] and returns its [`LarivIndex`].
     #[inline]
     pub fn push(&self, conn: T) -> LarivIndex<E> {
-        // call LarivNode::push() on the node currently on the cursor
-        // if miri ever complains about a data race here, change this to SeqCst
+        // This calls LarivNode::push() on the node currently on the cursor
+        // if miri ever complains about a data race here, change this to SeqCst.
+        //
+        // # Safety
+        // `self.shared` lives as much as `&self`.
         unsafe {
             &*self
-                .list
+                .shared
                 .as_ref()
-                .get_shared()
                 .cursor_ptr
                 .load(Ordering::Acquire)
         }
@@ -200,8 +205,10 @@ impl<T, E: Epoch> Lariv<T, E> {
             return;
         };
         tag.empty(e);
-        unsafe { self.list.as_ref() }
-            .get_shared()
+
+        // # Safety
+        // `self.list` lives as much as `&self`.
+        unsafe { self.list.as_ref() }.get_shared()
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
     }
@@ -217,8 +224,9 @@ impl<T, E: Epoch> Lariv<T, E> {
     /// [`take_with_epoch`]: Lariv::take_with_epoch
     #[inline]
     pub fn take<I: Epoch>(&self, index: LarivIndex<I>) -> Option<T> {
-        unsafe { self.list.as_ref() }
-            .get_shared()
+        // # Safety
+        // `self.list` lives as much as `&self`.
+        unsafe { self.list.as_ref() }.get_shared()
             .allocation_threshold
             .fetch_sub(1, Ordering::AcqRel);
         self.get_ptr(index).and_then(|(tag, e)| tag.take(e))
@@ -230,15 +238,21 @@ impl<T, E: Epoch> Lariv<T, E> {
         &self,
         mut li: LarivIndex<I>,
     ) -> Option<(&AtomicOptionTag<E>, NonNull<AtomicElement<T>>)> {
-        let shared = unsafe { self.list.as_ref().get_shared() };
+        // # Safety
+        // `self.list` lives as much as `&self`.
+        let mut node = unsafe { self.list.as_ref() };
+        let shared = node.get_shared();
         if li.index >= shared.cap as u64 || li.node >= shared.nodes.load(Ordering::Acquire) as u64 {
             return None;
         };
-        let mut node = unsafe { self.list.as_ref() };
         while li.node > 0 {
             node = node.next.get()?;
             li.node -= 1;
         }
+
+        // # Safety
+        // The index is checked above, and the overflow is checked by the allocator.
+        // The other pointer is guaranteed to be non-null by the fact above.
         Some(unsafe {
             (
                 &*node.metadata_ptr().as_ptr().add(li.index as usize),
@@ -253,14 +267,17 @@ impl<T, E: Epoch> Lariv<T, E> {
     /// [`new`]: Lariv::new
     #[inline]
     pub fn node_capacity(&self) -> usize {
-        unsafe { self.list.as_ref() }.get_shared().cap
+        // # Safety
+        // `self.shared` lives as much as `&self`
+        unsafe { self.shared.as_ref() }.cap
     }
 
     /// Returns the amount of nodes on the Lariv.
     #[inline]
     pub fn node_num(&self) -> usize {
-        unsafe { self.list.as_ref() }
-            .get_shared()
+        // # Safety
+        // `self.shared` lives as much as `&self`.
+        unsafe { self.shared.as_ref() }
             .nodes
             .load(Ordering::Acquire)
     }
@@ -277,15 +294,15 @@ impl<T, E: Epoch> Lariv<T, E> {
 }
 
 impl<T, E: Epoch> LarivNode<T, E> {
-    fn write_in_place(alloc: NonNull<Self>, nth: usize, shared_items: &SharedItems<T, E>) {
-        unsafe {
-            alloc.as_ptr().write(Self {
-                next: OncePtr::new(),
-                allocated: AtomicBool::new(false),
-                nth,
-                shared: shared_items.into(),
-            })
-        }
+    /// # Safety
+    /// The pointer must be valid for the size of `Self`.
+    unsafe fn write_in_place(alloc: NonNull<Self>, nth: usize, shared_items: &SharedItems<T, E>) {
+        alloc.as_ptr().write(Self {
+            next: OncePtr::new(),
+            allocated: AtomicBool::new(false),
+            nth,
+            shared: shared_items.into(),
+        })
     }
 
     #[inline]
@@ -295,10 +312,15 @@ impl<T, E: Epoch> LarivNode<T, E> {
         // claim an index in the current node in the cursor
         let mut index = shared.cursor.fetch_add(1, Ordering::AcqRel);
         'push: loop {
-            // check availability and write the value
+            // Check availability and write the value.
+            //
+            // # Safety
+            // The pointer is guaranteed to be non-null and not overflow by the allocator.
             if likely(index < shared.cap) && let Some(mut pos) =
                 unsafe { &*node.metadata_ptr().as_ptr().add(index) }.try_set()
             {
+                // # Safety
+                // Same as above.
                 pos.write(unsafe { NonNull::new_unchecked(node.data_ptr().as_ptr().add(index)) }, element);
                 break LarivIndex { node: node.nth as u64, index: index as u64, epoch: *pos.guard }
             }
@@ -316,6 +338,8 @@ impl<T, E: Epoch> LarivNode<T, E> {
                         Ordering::Acquire,
                     ) {
                         Ok(x) => {
+                            // # Safety
+                            // `cursor_ptr` must always point to a valid node.
                             node = unsafe { &*shared.cursor_ptr.load(Ordering::Acquire) };
                             index = x;
                             continue 'push;
@@ -341,6 +365,9 @@ impl<T, E: Epoch> LarivNode<T, E> {
                 let head = shared.head.as_ptr();
                 shared.cursor_ptr.store(head, Ordering::Release);
                 shared.cursor.store(1, Ordering::Release);
+
+                // # Safety
+                // `shared.head` is guaranteed to point at the first node.
                 node = unsafe { &*head };
                 index = 0;
                 continue 'push;
@@ -354,32 +381,41 @@ impl<T, E: Epoch> LarivNode<T, E> {
     #[inline]
     fn extend(&self, first_element: T) -> LarivIndex<E> {
         let shared = self.get_shared();
-        // allocate buffer
-        let alloc = allocate::<T, E>(shared.cap);
-        let node = unsafe { alloc.as_ref() };
+        // Allocate the buffer.
         let nth_offset = self
             .nth
             .checked_add(2)
             .expect("The number of nodes has overflown.");
         let nth = nth_offset - 1;
-        Self::write_in_place(alloc, nth, unsafe { self.shared.as_ref() });
-        // set first element
+        let alloc = allocate::<T, E>(shared.cap);
+        
+        // # Safety
+        // The allocation is checked to be valid, and the node gets initialized.
+        // Then, a reference to it is created.
+        unsafe { Self::write_in_place(alloc, nth, self.shared.as_ref()) };
+        let node = unsafe { alloc.as_ref() };
+
+        // # Safety
+        // The shared `self.shared` lives as much as `&self`.
+        // The writes are at the start of the buffer.
+        // The allocation process is protected by `self.allocated`.
         unsafe {
+            // Write data
             node.metadata_ptr().as_ptr().write(AtomicOptionTag::some());
             node.data_ptr()
                 .as_ptr()
                 .write(MaybeUninit::new(first_element));
+            self.next.set_unchecked(alloc);
         };
-        // create node
-        // set next
-        unsafe { self.next.set_unchecked(alloc) };
-        // update shared info
+
+        // Update shared info.
         shared.nodes.store(nth_offset, Ordering::Release); // checked earlier
         shared
             .allocation_threshold
             .store(self.calculate_allocate_threshold(), Ordering::Release);
         shared.cursor_ptr.store(alloc.as_ptr(), Ordering::Release);
         shared.cursor.store(1, Ordering::Release);
+
         LarivIndex {
             node: nth as u64,
             index: 0,
@@ -392,23 +428,32 @@ impl<T, E: Epoch> LarivNode<T, E> {
         let shared = self.get_shared();
         /// Percentage [`FACTOR`] of the total capacity
         const FACTOR: f64 = 0.3;
-        unsafe {
-            (shared
-                .nodes
-                .load(Ordering::Acquire)
-                .saturating_mul(shared.cap) as f64)
-                .mul(FACTOR)
-                .to_int_unchecked()
-        }
+        let threshold = (shared
+            .nodes
+            .load(Ordering::Acquire)
+            .saturating_mul(shared.cap) as f64)
+            .mul(FACTOR);
+
+        // # Safety
+        // Neither NaN nor infinite can happen in this context, and
+        // on 64-bit `size_of::<f64>() == size_of::<isize>()`.
+        #[cfg(target_pointer_width = "64")]
+        return unsafe { threshold.to_int_unchecked() };
+        #[cfg(not(target_pointer_width = "64"))]
+        return threshold as isize;
     }
 
     #[inline(always)]
     fn get_shared(&self) -> &SharedItems<T, E> {
+        // # Safety
+        // `self.shared` lives as much as `&self`.
         unsafe { self.shared.as_ref() }
     }
 
     #[inline(always)]
     fn metadata_ptr(&self) -> NonNull<AtomicOptionTag<E>> {
+        // # Safety
+        // The pointer is guaranteed to be non-null and not overflow by the allocator.
         unsafe {
             NonNull::new_unchecked(
                 (self as *const Self)
@@ -421,6 +466,8 @@ impl<T, E: Epoch> LarivNode<T, E> {
 
     #[inline(always)]
     fn data_ptr(&self) -> NonNull<AtomicElement<T>> {
+        // # Safety
+        // The pointer is guaranteed to be non-null and not overflow by the allocator.
         unsafe {
             NonNull::new_unchecked(
                 (self as *const Self)
@@ -452,22 +499,33 @@ impl<T: Debug> Debug for Lariv<T> {
 // safe but miri hates it (stacked borrows at it again, w/ tree borrows is fine)
 impl<T, E: Epoch> Drop for Lariv<T, E> {
     fn drop(&mut self) {
+        // # Safety
+        // `self.list` lives as much as `&self`. It is dropped later.
         let mut current_node = Some(unsafe { self.list.as_ref() });
         let buf_cap = unsafe { self.list.as_ref() }.get_shared().cap;
-        unsafe {
-            while let Some(node) = current_node {
-                if needs_drop::<T>() {
-                    for i in 0..buf_cap {
+
+        while let Some(node) = current_node {
+            if needs_drop::<T>() {
+                for i in 0..buf_cap {
+                    // # Safety
+                    // The pointers are guaranteed to not overflow and be valid at
+                    // `ptr + i * size_of::<T>()` by the allocator.
+                    unsafe {
                         if *(*node.metadata_ptr().as_ptr().add(i)).tag.get_mut() {
                             drop_in_place(node.data_ptr().as_ptr().cast::<T>().add(i));
                         }
                     }
                 }
-                current_node = node.next.get();
-                dealloc(node as *const _ as *mut u8, layout::<T, E>(buf_cap));
             }
-            drop(Box::from_raw(self.shared.as_ptr()))
+            current_node = node.next.get();
+            // # Safety
+            // The allocation is freed with the same layout from its initial allocation.
+            unsafe { dealloc(node as *const _ as *mut u8, layout::<T, E>(buf_cap)) };
         }
+        // # Safety
+        // No pointers to anything on `self.shared` are still alive, and it was
+        // allocated by [`Box`].
+        drop(unsafe { Box::from_raw(self.shared.as_ptr()) })
     }
 }
 
@@ -496,6 +554,8 @@ impl LarivIndex<LarivEpoch> {
 impl From<LarivIndex> for u128 {
     #[inline]
     fn from(value: LarivIndex) -> Self {
+        // # Safety
+        // They're just numbers.
         u128::from_le_bytes(unsafe {
             transmute::<[[u8; 8]; 2], [u8; 16]>([
                 value.node.to_le_bytes(),
@@ -508,6 +568,8 @@ impl From<LarivIndex> for u128 {
 impl From<u128> for LarivIndex {
     #[inline]
     fn from(value: u128) -> Self {
+        // # Safety
+        // They're just numbers.
         let [node, index] = unsafe { transmute::<[u8; 16], [u64; 2]>(u128::to_le_bytes(value)) };
         LarivIndex {
             node,
@@ -520,8 +582,17 @@ impl From<u128> for LarivIndex {
 #[cfg(test)]
 mod tests;
 
+/// # Safety
+/// T must be [`Send`] for [`Lariv<T>`] to be [`Send`], as T might be moved out.
 unsafe impl<T: Send, E: Epoch> Send for Lariv<T, E> {}
+
+/// T must be [`Sync`] for [`Lariv<T>`] to be [`Sync`], as T might be referenced from another thread.
 unsafe impl<T: Sync, E: Epoch> Sync for Lariv<T, E> {}
 
+/// # Safety
+/// Above
 unsafe impl<T: Send, E: Epoch> Send for LarivNode<T, E> {}
+
+/// # Safety
+/// Above
 unsafe impl<T: Sync, E: Epoch> Sync for LarivNode<T, E> {}
